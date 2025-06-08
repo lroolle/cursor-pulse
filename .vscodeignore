@@ -13,3 +13,12 @@ vsc-extension-quickstart.md
 **/*.map
 **/*.ts
 **/.vscode-test.*
+
+# GitHub Actions and development files
+.github/**
+GITHUB_ACTIONS_SETUP.md
+examples/
+
+# Cursor rules
+.cursor/**
+.claude/**

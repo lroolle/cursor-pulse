@@ -1,6 +1,6 @@
 # Cursor Pulse
 
-![Cursor Pulse Logo](images/icon.png)
+![Cursor Pulse Logo](https://raw.githubusercontent.com/lroolle/cursor-pulse/main/images/icon.png)
 
 **Elegant monitoring for Cursor AI subscription quota with clean status bar integration and rich
 analytics**
@@ -8,8 +8,9 @@ analytics**
 [![Version](https://img.shields.io/badge/version-0.1.0-blue)](https://github.com/lroolle/cursor-pulse)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 [![VSCode](https://img.shields.io/badge/VSCode-1.96.0+-blue)](https://code.visualstudio.com/)
+[![Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-blue)](https://marketplace.visualstudio.com/items?itemName=lroolle.cursor-pulse)
 
-![Screenshot](images/cursor-pulse-screenshot.png)
+![Screenshot](https://raw.githubusercontent.com/lroolle/cursor-pulse/main/images/cursor-pulse-screenshot.png)
 
 ## ✨ Features
 
@@ -27,9 +28,14 @@ analytics**
 
 ### From VS Code / Cursor Marketplace
 
+**[📦 Install from VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=lroolle.cursor-pulse)**
+
 1. Open VS Code Extensions panel (`Ctrl+Shift+X` / `Cmd+Shift+X`)
 2. Search for "Cursor Pulse"
 3. Click **Install**
+
+Or install directly from the
+[Visual Studio Code Marketplace](https://marketplace.visualstudio.com/items?itemName=lroolle.cursor-pulse).
 
 ### Manual Installation
 
@@ -212,10 +218,6 @@ src/
     └── index.ts         # TypeScript type definitions
 ```
 
-## 📄 License
-
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-
 ## 📋 TODO
 
 ### Upcoming Features
@@ -250,13 +252,18 @@ providing users with excellent alternatives to choose from! 🙏
 - **VS Code Team** - For the excellent extension APIs
 - **Contributors** - Thank you for your improvements and bug reports
 
+## 📄 License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
 ---
 
 <div align="center">
 
 **📊 Monitor your Cursor usage with style! ⚡**
 
-[Report Bug](https://github.com/lroolle/cursor-pulse/issues) •
+[📦 Install from Marketplace](https://marketplace.visualstudio.com/items?itemName=lroolle.cursor-pulse)
+• [Report Bug](https://github.com/lroolle/cursor-pulse/issues) •
 [Request Feature](https://github.com/lroolle/cursor-pulse/issues) •
 [Discussions](https://github.com/lroolle/cursor-pulse/discussions)
 
