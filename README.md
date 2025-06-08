@@ -37,6 +37,22 @@ analytics**
 Or install directly from the
 [Visual Studio Code Marketplace](https://marketplace.visualstudio.com/items?itemName=lroolle.cursor-pulse).
 
+### Alternative: GitHub Releases
+
+**[📥 Download VSIX from GitHub Releases](https://github.com/lroolle/cursor-pulse/releases)**
+
+1. Go to the [Releases page](https://github.com/lroolle/cursor-pulse/releases)
+2. Download the latest `.vsix` file from the assets section
+3. In Cursor: `Ctrl+Shift+P` / `Cmd+Shift+P`
+4. Run command: `Extensions: Install from VSIX...`
+5. Select the downloaded `.vsix` file
+
+This method is useful when:
+
+- 🔄 You want to install a specific version
+- 🏢 Your organization restricts marketplace access
+- 🧪 You want to test pre-release versions
+
 ### Manual Installation
 
 ```bash
