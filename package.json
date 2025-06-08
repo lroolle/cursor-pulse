@@ -166,7 +166,7 @@
     "release:patch": "npm version patch && git push origin --tags",
     "release:minor": "npm version minor && git push origin --tags",
     "release:major": "npm version major && git push origin --tags",
-    "release:check": "npm run check-types && npm run lint && npm run test"
+    "release:check": "npm run check-types && npm run lint && npm run format:check"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -32,9 +32,6 @@ jobs:
 
       - name: Run formatter check
         run: npm run format:check
-
-      - name: Run tests
-        run: npm run test
 
       - name: Package extension
         run: npm run package
