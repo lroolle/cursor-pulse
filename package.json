@@ -2,7 +2,7 @@
   "name": "cursor-pulse",
   "displayName": "Cursor Pulse",
   "description": "Elegant monitoring for Cursor AI subscription quota with clean status bar and rich analytics",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "lroolle",
   "icon": "images/icon.png",
   "engines": {
