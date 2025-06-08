@@ -42,6 +42,9 @@ jobs:
       - name: Install vsce
         run: npm install -g @vscode/vsce
 
+      - name: Create VSIX package
+        run: vsce package --no-dependencies
+
       - name: Publish to VS Code Marketplace
         env:
           VSCE_PAT: ${{ secrets.VS_MARKETPLACE_TOKEN }}
