@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+
+# Build outputs
+out/
+dist/
+*.vsix
+
+# Generated files
+*.log
+*.tmp
+
+# SQLite databases
+*.db
+*.sqlite
+
+# VSCode test files
+.vscode-test/
+
+# Documentation that should preserve formatting
+CHANGELOG.md
+vsc-extension-quickstart.md
+
+# XML files
+*.xml
+
+# SVG files (preserve formatting)
+*.svg
+
+# Test SQL files
+*.sql 

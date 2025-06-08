@@ -1,0 +1,192 @@
+{
+  "name": "cursor-pulse",
+  "displayName": "Cursor Pulse",
+  "description": "Elegant monitoring for Cursor AI subscription quota with clean status bar and rich analytics",
+  "version": "0.1.0",
+  "publisher": "lroolle",
+  "icon": "images/icon.png",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "keywords": [
+    "cursor",
+    "monitoring",
+    "ai",
+    "analytics",
+    "usage"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "ui"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": true,
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "cursorPulse.refresh",
+        "title": "Refresh Quota",
+        "category": "Cursor Pulse",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "cursorPulse.softReload",
+        "title": "Soft Reload",
+        "category": "Cursor Pulse",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "cursorPulse.hardReload",
+        "title": "Hard Reload (Clear All Cache)",
+        "category": "Cursor Pulse",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "cursorPulse.openSettings",
+        "title": "Open Settings",
+        "category": "Cursor Pulse",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "cursorPulse.showActions",
+        "title": "Show Actions",
+        "category": "Cursor Pulse"
+      },
+      {
+        "command": "cursorPulse.setLogLevel",
+        "title": "Set Log Level",
+        "category": "Cursor Pulse",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "cursorPulse.setUsageLimit",
+        "title": "Set Usage-Based Limit",
+        "category": "Cursor Pulse",
+        "icon": "$(credit-card)"
+      },
+      {
+        "command": "cursorPulse.enableUsageBased",
+        "title": "Enable Usage-Based Pricing",
+        "category": "Cursor Pulse",
+        "icon": "$(unlock)"
+      },
+      {
+        "command": "cursorPulse.disableUsageBased",
+        "title": "Disable Usage-Based Pricing",
+        "category": "Cursor Pulse",
+        "icon": "$(lock)"
+      },
+      {
+        "command": "cursorPulse.showLogs",
+        "title": "Show Logs",
+        "category": "Cursor Pulse",
+        "icon": "$(output)"
+      }
+    ],
+    "configuration": {
+      "title": "Cursor Pulse",
+      "properties": {
+        "cursorPulse.showPercentage": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show usage percentage in status bar"
+        },
+        "cursorPulse.enableQuotaAnimation": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable visual animation when quota increases"
+        },
+        "cursorPulse.refreshInterval": {
+          "type": "number",
+          "default": 120,
+          "minimum": 60,
+          "description": "Refresh interval in seconds (minimum 60)"
+        },
+        "cursorPulse.analyticsTimePeriod": {
+          "type": "string",
+          "enum": [
+            "1d",
+            "7d",
+            "30d"
+          ],
+          "default": "1d",
+          "description": "Time period for analytics data (1 day, 7 days, or 30 days)"
+        },
+        "cursorPulse.maxUsageEvents": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Maximum number of usage events to display in tooltip (1-20)"
+        },
+        "cursorPulse.showChargesCollapsed": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show usage-based charges in a collapsible section to save tooltip space"
+        },
+        "cursorPulse.enableNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable quota usage notifications"
+        },
+        "cursorPulse.customDatabasePath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom path to the Cursor database file. Leave empty to use default location."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && npm run format:check && npm run lint && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run check-types && npm run format:check && npm run lint && node esbuild.js --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "~22.15.24",
+    "@types/vscode": "^1.96.0",
+    "@typescript-eslint/eslint-plugin": "^8.33.0",
+    "@typescript-eslint/parser": "^8.33.0",
+    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.25.5",
+    "eslint": "^9.27.0",
+    "npm-run-all": "^4.1.5",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "sqlite3": "^5.1.7"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lroolle/cursor-pulse.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lroolle/cursor-pulse/issues"
+  },
+  "license": "Apache-2.0"
+}
