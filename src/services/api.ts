@@ -217,7 +217,9 @@ export class ApiService {
         break;
       default:
         log.debug(`[API] Invalid time period '${timePeriod}', using 7d fallback`);
-        startDate.setDate(startDate.getDate() - 7);
+        const dayOfWeekDefault = startDate.getDay();
+        const daysFromMondayDefault = dayOfWeekDefault === 0 ? 6 : dayOfWeekDefault - 1;
+        startDate.setDate(startDate.getDate() - daysFromMondayDefault);
         startDate.setHours(0, 0, 0, 0);
     }
 
@@ -270,10 +272,15 @@ export class ApiService {
 
       const data = await response.json();
 
+      const responseHeaders: Record<string, string> = {};
+      response.headers.forEach((value, key) => {
+        responseHeaders[key] = value;
+      });
+
       log.trace(`[API] Response from ${endpoint}:`, {
         status: response.status,
         statusText: response.statusText,
-        headers: Object.fromEntries(response.headers.entries()),
+        headers: responseHeaders,
         data: JSON.stringify(data, null, 2),
       });
 

@@ -2,15 +2,13 @@ import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
 import * as vscode from "vscode";
-import { Database } from "sqlite3";
-import { CacheMetadata, CachedData, CacheStrategy } from "../types";
+import initSqlJs, { Database } from "sql.js";
 import { execSync } from "child_process";
 import { log } from "../utils/logger";
 
 export class DatabaseService {
   private static instance: DatabaseService;
-  private static readonly CACHE_KEY_PREFIX = "cursor-pulse.cached";
-  private static readonly DEFAULT_TTL = 5 * 60 * 1000;
+  private sqlWasm: any = null;
 
   static getInstance(): DatabaseService {
     if (!DatabaseService.instance) {
@@ -19,394 +17,143 @@ export class DatabaseService {
     return DatabaseService.instance;
   }
 
-  async getCachedData<T>(key: string): Promise<T | null> {
-    try {
-      const dbPath = this.getCursorDBPath();
-      if (!fs.existsSync(dbPath)) {
-        return null;
-      }
-
-      const cacheKey = `${DatabaseService.CACHE_KEY_PREFIX}.${key}`;
-      log.trace(`[Database] Getting cached data:`, {
-        key: key,
-        cacheKey: cacheKey,
-        dbPath: dbPath,
-      });
-
-      const cachedValue = await this.getValueFromDB(dbPath, cacheKey);
-
-      if (!cachedValue) {
-        return null;
-      }
-
-      const cachedData: CachedData<T> = JSON.parse(cachedValue);
-      log.trace(`[Database] Retrieved cached data:`, {
-        key: key,
-        metadata: cachedData.metadata,
-        data: JSON.stringify(cachedData.data, null, 2),
-      });
-
-      if (await this.isCacheValid(cachedData.metadata)) {
-        return cachedData.data;
-      }
-
-      await this.removeCachedData(key);
-      log.trace(`[Database] Cache expired for key: ${key}`);
-      return null;
-    } catch (err) {
-      log.error(`[Database] Cache retrieval failed for key: ${key}`, err);
-      return null;
-    }
-  }
-
-  async setCachedData<T>(
-    key: string,
-    data: T,
-    strategy: CacheStrategy = CacheStrategy.TIME_BASED,
-    ttl: number = DatabaseService.DEFAULT_TTL,
-    params?: string,
-  ): Promise<void> {
-    try {
-      const dbPath = this.getCursorDBPath();
-      if (!fs.existsSync(dbPath)) {
-        log.warn("[Database] Database file does not exist for caching");
-        return;
-      }
-
-      const stateVersion = await this.getCurrentStateVersion();
-      const metadata: CacheMetadata = {
-        timestamp: Date.now(),
-        ttl,
-        stateVersion,
-        strategy,
-        params,
-      };
-
-      const cachedData: CachedData<T> = { data, metadata };
-      const cacheKey = `${DatabaseService.CACHE_KEY_PREFIX}.${key}`;
-
-      await this.setValueInDB(dbPath, cacheKey, JSON.stringify(cachedData));
-      log.trace(`[Database] Data cached for key: ${key} (${strategy})`);
-    } catch (err) {
-      log.error(`[Database] Cache storage failed for key: ${key}`, err);
-    }
-  }
-
-  async removeCachedData(key: string): Promise<void> {
-    try {
-      const dbPath = this.getCursorDBPath();
-      if (!fs.existsSync(dbPath)) {
-        return;
-      }
-
-      const cacheKey = `${DatabaseService.CACHE_KEY_PREFIX}.${key}`;
-      await this.removeValueFromDB(dbPath, cacheKey);
-      log.trace(`[Database] Cache removed for key: ${key}`);
-    } catch (err) {
-      log.error(`[Database] Cache removal failed for key: ${key}`, err);
-    }
-  }
-
-  async clearCache(): Promise<void> {
-    try {
-      const dbPath = this.getCursorDBPath();
-      if (!fs.existsSync(dbPath)) {
-        return;
-      }
-
-      return new Promise((resolve, reject) => {
-        const db = new Database(dbPath, (err) => {
-          if (err) {
-            reject(err);
-            return;
+  private async initSqlJs(): Promise<any> {
+    if (!this.sqlWasm) {
+      const wasmPath = path.join(__dirname, "sql-wasm.wasm");
+      this.sqlWasm = await initSqlJs({
+        locateFile: (file: string) => {
+          if (file.endsWith(".wasm")) {
+            return wasmPath;
           }
-        });
-
-        const query = `DELETE FROM ItemTable WHERE key LIKE '${DatabaseService.CACHE_KEY_PREFIX}.%'`;
-
-        db.run(query, (err) => {
-          db.close();
-          if (err) {
-            reject(err);
-          } else {
-            log.debug("[Database] All cache data cleared");
-            resolve();
-          }
-        });
+          return file;
+        },
       });
-    } catch (err) {
-      log.error("[Database] Cache clear failed", err);
     }
-  }
-
-  async clearAllCache(): Promise<void> {
-    await this.clearCache();
-  }
-
-  async debugCacheEntry(key: string): Promise<void> {
-    try {
-      const dbPath = this.getCursorDBPath();
-      if (!fs.existsSync(dbPath)) {
-        log.debug(`[Database] No database file exists for cache debug: ${key}`);
-        return;
-      }
-
-      const cacheKey = `${DatabaseService.CACHE_KEY_PREFIX}.${key}`;
-      const cachedValue = await this.getValueFromDB(dbPath, cacheKey);
-
-      if (!cachedValue) {
-        log.debug(`[Database] No cache entry found for: ${key}`);
-        return;
-      }
-
-      try {
-        const cachedData = JSON.parse(cachedValue);
-        const metadata = cachedData.metadata;
-        const now = Date.now();
-        const age = Math.round((now - metadata.timestamp) / 1000);
-        const ttlRemaining = Math.round((metadata.ttl - (now - metadata.timestamp)) / 1000);
-
-        log.debug(`[Database] Cache entry for '${key}':`);
-        log.debug(`  - Strategy: ${metadata.strategy}`);
-        log.debug(`  - Age: ${age}s`);
-        log.debug(`  - TTL: ${Math.round(metadata.ttl / 1000)}s`);
-        log.debug(`  - Remaining: ${ttlRemaining}s`);
-        log.debug(`  - Valid: ${await this.isCacheValid(metadata)}`);
-        log.debug(`  - Data type: ${typeof cachedData.data}`);
-
-        if (metadata.params) {
-          log.debug(`  - Params: ${metadata.params}`);
-        }
-      } catch (parseError) {
-        log.error(`[Database] Failed to parse cache entry for ${key}`, parseError);
-      }
-    } catch (err) {
-      log.error(`[Database] Cache debug failed for key: ${key}`, err);
-    }
+    return this.sqlWasm;
   }
 
   /**
    * Check if Cursor state has changed since last check
+   * This is read-only and safe to use
    */
   async hasStateChanged(): Promise<boolean> {
     try {
       const currentVersion = await this.getCurrentStateVersion();
-      const lastKnownVersion = await this.getCachedData<number>("last_state_version");
-
-      if (lastKnownVersion === null) {
-        await this.setCachedData("last_state_version", currentVersion, CacheStrategy.PERMANENT);
-        return false;
-      }
-
-      const hasChanged = currentVersion > lastKnownVersion;
-      if (hasChanged) {
-        await this.setCachedData("last_state_version", currentVersion, CacheStrategy.PERMANENT);
-        log.debug(`[Database] State changed: ${lastKnownVersion} -> ${currentVersion}`);
-      }
-
-      return hasChanged;
+      // We'll need to implement this check differently now that we don't cache in ItemTable
+      // For now, return true to always assume state has changed
+      return true;
     } catch (err) {
-      log.error("[Database] State change detection failed", err);
+      log.error("[DatabaseService] State change detection failed", err);
       return true;
     }
   }
 
-  private async getCurrentStateVersion(): Promise<number> {
+  async getCurrentStateVersion(): Promise<number> {
+    let db: Database | null = null;
+    let stmt: any = null;
     try {
       const dbPath = this.getCursorDBPath();
       if (!fs.existsSync(dbPath)) {
         return 0;
       }
 
-      return new Promise((resolve, reject) => {
-        const db = new Database(dbPath, (err) => {
-          if (err) {
-            reject(err);
-            return;
-          }
-        });
+      const SQL = await this.initSqlJs();
+      const data = fs.readFileSync(dbPath);
+      db = new SQL.Database(data);
 
-        const query = `SELECT MAX(rowid) as maxRowId FROM cursorDiskKV`;
+      let query = `SELECT MAX(rowid) as maxRowId FROM cursorDiskKV`;
 
-        db.get(query, (err, row: any) => {
-          db.close();
-          if (err) {
-            this.getMaxRowIdFromItemTable(dbPath).then(resolve).catch(reject);
-          } else {
-            resolve(row?.maxRowId || 0);
-          }
-        });
-      });
+      try {
+        stmt = db!.prepare(query);
+        const result = stmt.getAsObject();
+        return Number(result.maxRowId) || 0;
+      } catch (err) {
+        // Fallback to ItemTable if cursorDiskKV doesn't exist
+        log.debug("[DatabaseService] cursorDiskKV table not found, falling back to ItemTable");
+        return await this.getMaxRowIdFromItemTable(dbPath);
+      }
     } catch (err) {
-      log.error("[Database] State version detection failed", err);
+      log.error("[DatabaseService] State version detection failed", err);
       return 0;
+    } finally {
+      if (stmt) {
+        try {
+          stmt.free();
+        } catch (freeErr) {
+          log.warn("[DatabaseService] Error freeing statement", freeErr);
+        }
+      }
+      if (db) {
+        try {
+          db.close();
+        } catch (closeErr) {
+          log.warn("[DatabaseService] Error closing database connection", closeErr);
+        }
+      }
     }
   }
 
   private async getMaxRowIdFromItemTable(dbPath: string): Promise<number> {
-    return new Promise((resolve, reject) => {
-      const db = new Database(dbPath, (err) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-      });
+    let db: Database | null = null;
+    let stmt: any = null;
+    try {
+      const SQL = await this.initSqlJs();
+      const data = fs.readFileSync(dbPath);
+      db = new SQL.Database(data);
 
       const query = `SELECT MAX(rowid) as maxRowId FROM ItemTable`;
+      stmt = db!.prepare(query);
 
-      db.get(query, (err, row: any) => {
-        db.close();
-        if (err) {
-          reject(err);
-        } else {
-          resolve(row?.maxRowId || 0);
+      let result: any = null;
+      if (stmt.step()) {
+        result = stmt.getAsObject();
+      }
+
+      return Number(result?.maxRowId) || 0;
+    } catch (err) {
+      log.error("[DatabaseService] Max row ID query failed", err);
+      return 0;
+    } finally {
+      if (stmt) {
+        try {
+          stmt.free();
+        } catch (freeErr) {
+          log.warn("[DatabaseService] Error freeing statement", freeErr);
         }
-      });
-    });
-  }
-
-  private async isCacheValid(metadata: CacheMetadata): Promise<boolean> {
-    const now = Date.now();
-
-    switch (metadata.strategy) {
-      case CacheStrategy.PERMANENT:
-        return true;
-
-      case CacheStrategy.TIME_BASED:
-        return now - metadata.timestamp < metadata.ttl;
-
-      case CacheStrategy.STATE_BASED:
-        const currentStateVersion = await this.getCurrentStateVersion();
-        const timeValid = now - metadata.timestamp < metadata.ttl;
-        const stateValid = currentStateVersion === metadata.stateVersion;
-        return timeValid && stateValid;
-
-      case CacheStrategy.PARAM_BASED:
-        return now - metadata.timestamp < metadata.ttl;
-
-      default:
-        return false;
+      }
+      if (db) {
+        try {
+          db.close();
+        } catch (closeErr) {
+          log.warn("[DatabaseService] Error closing database connection", closeErr);
+        }
+      }
     }
   }
 
-  private async getValueFromDB(dbPath: string, key: string): Promise<string | null> {
-    return new Promise((resolve, reject) => {
-      const db = new Database(dbPath, (err) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-      });
-
-      const query = `SELECT value FROM ItemTable WHERE key = ?`;
-      log.trace(`[Database] Executing query:`, {
-        sql: query,
-        params: [key],
-        dbPath: dbPath,
-      });
-
-      db.get(query, [key], (err, row: any) => {
-        db.close();
-        if (err) {
-          reject(err);
-        } else {
-          log.trace(`[Database] Query result:`, {
-            key: key,
-            found: !!row,
-            value: row?.value ? "exists" : null,
-          });
-          resolve(row?.value || null);
-        }
-      });
-    });
-  }
-
-  private async setValueInDB(dbPath: string, key: string, value: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const db = new Database(dbPath, (err) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-      });
-
-      const query = `INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)`;
-      log.trace(`[Database] Executing query:`, {
-        sql: query,
-        params: [key, "value_length:" + value.length],
-        dbPath: dbPath,
-      });
-
-      db.run(query, [key, value], (err) => {
-        db.close();
-        if (err) {
-          reject(err);
-        } else {
-          log.trace(`[Database] Value set successfully:`, {
-            key: key,
-            valueLength: value.length,
-          });
-          resolve();
-        }
-      });
-    });
-  }
-
-  private async removeValueFromDB(dbPath: string, key: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const db = new Database(dbPath, (err) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-      });
-
-      const query = `DELETE FROM ItemTable WHERE key = ?`;
-      log.trace(`[Database] Executing query:`, {
-        sql: query,
-        params: [key],
-        dbPath: dbPath,
-      });
-
-      db.run(query, [key], (err) => {
-        db.close();
-        if (err) {
-          reject(err);
-        } else {
-          log.trace(`[Database] Value deleted successfully:`, { key: key });
-          resolve();
-        }
-      });
-    });
-  }
-
-  async getCursorToken(): Promise<string | null> {
+  private validateAndNormalizePath(customPath: string): string | null {
     try {
-      const dbPath = this.getCursorDBPath();
-      log.debug(`[Database] Accessing database at: ${dbPath}`);
+      // Normalize the path to resolve relative components
+      const normalized = path.normalize(customPath);
 
-      if (!fs.existsSync(dbPath)) {
-        log.warn("[Database] Database file does not exist");
+      // Check for path traversal attempts
+      if (normalized.includes("..")) {
+        log.warn(`[DatabaseService] Path traversal detected in: ${customPath}`);
         return null;
       }
 
-      return this.extractTokenFromDB(dbPath);
-    } catch (err) {
-      log.error("[Database] Token extraction failed", err);
-      return null;
-    }
-  }
+      // Ensure path is absolute for security
+      const resolved = path.resolve(normalized);
 
-  async getCursorUserInfo(): Promise<any | null> {
-    try {
-      const dbPath = this.getCursorDBPath();
-      if (!fs.existsSync(dbPath)) {
+      // Validate file extension
+      if (!resolved.endsWith(".vscdb") && !resolved.endsWith(".db")) {
+        log.warn(`[DatabaseService] Invalid database file extension: ${resolved}`);
         return null;
       }
 
-      return this.extractUserInfoFromDB(dbPath);
+      return resolved;
     } catch (err) {
-      log.error("[Database] User info extraction failed", err);
+      log.error(`[DatabaseService] Path validation failed for: ${customPath}`, err);
       return null;
     }
   }
@@ -416,8 +163,13 @@ export class DatabaseService {
     const customPath = config.get<string>("customDatabasePath");
 
     if (customPath?.trim()) {
-      log.debug(`[Database] Using custom path: ${customPath}`);
-      return customPath;
+      const validatedPath = this.validateAndNormalizePath(customPath.trim());
+      if (validatedPath) {
+        log.debug(`[DatabaseService] Using custom path: ${validatedPath}`);
+        return validatedPath;
+      } else {
+        log.warn(`[DatabaseService] Invalid custom path provided: ${customPath}, falling back to default`);
+      }
     }
 
     return this.getDefaultDBPath();
@@ -439,7 +191,7 @@ export class DatabaseService {
         if (this.isRunningInWSL()) {
           const windowsUsername = this.getWindowsUsername();
           if (windowsUsername) {
-            log.debug(`[Database] Using WSL path for user: ${windowsUsername}`);
+            log.debug(`[DatabaseService] Using WSL path for user: ${windowsUsername}`);
             return path.join(
               "/mnt/c/Users",
               windowsUsername,
@@ -474,74 +226,116 @@ export class DatabaseService {
       });
       return result.trim() || undefined;
     } catch (err) {
-      log.error("[Database] Error getting Windows username", err);
+      log.error("[DatabaseService] Error getting Windows username", err);
       return undefined;
     }
   }
 
+  /**
+   * Read-only operation to get Cursor token from the database
+   * This is safe as we're only reading, not modifying the database
+   */
+  async getCursorToken(): Promise<string | null> {
+    try {
+      const dbPath = this.getCursorDBPath();
+      log.debug(`[DatabaseService] Accessing database at: ${dbPath}`);
+
+      if (!fs.existsSync(dbPath)) {
+        log.warn("[DatabaseService] Database file does not exist");
+        return null;
+      }
+
+      return this.extractTokenFromDB(dbPath);
+    } catch (err) {
+      log.error("[DatabaseService] Token extraction failed", err);
+      return null;
+    }
+  }
+
+  /**
+   * Read-only operation to get Cursor user info from the database
+   * This is safe as we're only reading, not modifying the database
+   */
+  async getCursorUserInfo(): Promise<any | null> {
+    try {
+      const dbPath = this.getCursorDBPath();
+      if (!fs.existsSync(dbPath)) {
+        return null;
+      }
+
+      return this.extractUserInfoFromDB(dbPath);
+    } catch (err) {
+      log.error("[DatabaseService] User info extraction failed", err);
+      return null;
+    }
+  }
+
   private async extractTokenFromDB(dbPath: string): Promise<string | null> {
-    return new Promise((resolve, reject) => {
-      const db = new Database(dbPath, (err) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-      });
+    try {
+      const SQL = await this.initSqlJs();
+      const data = fs.readFileSync(dbPath);
+      const db = new SQL.Database(data);
 
       const query = `
-        SELECT value 
-        FROM ItemTable 
-        WHERE key = 'cursorAuth/accessToken' 
+        SELECT value
+        FROM ItemTable
+        WHERE key = 'cursorAuth/accessToken'
         OR key = 'workos.sessionToken'
-        OR key LIKE '%cursor%token%'
-        OR key LIKE '%session%'
         ORDER BY key
       `;
 
-      log.trace(`[Database] Executing token query:`, {
+      log.trace(`[DatabaseService] Executing token query:`, {
         sql: query,
         dbPath: dbPath,
       });
 
-      db.get(query, (err, row: any) => {
-        db.close();
+      const stmt = db.prepare(query);
+      let result: any = null;
 
-        if (err) {
-          reject(err);
-          return;
+      // Step through results to find the first valid token
+      while (stmt.step()) {
+        const row = stmt.getAsObject();
+        if (row.value) {
+          result = row;
+          break;
         }
+      }
 
-        log.trace(`[Database] Token query result:`, {
-          found: !!row,
-          hasValue: !!row?.value,
-        });
+      stmt.free();
+      db.close();
 
-        if (!row) {
-          resolve(null);
-          return;
-        }
+      log.trace(`[DatabaseService] Token query result:`, {
+        found: !!result,
+        hasValue: !!result?.value,
+      });
+
+      if (!result || !result.value) {
+        return null;
+      }
+
+      try {
+        let token = String(result.value);
 
         try {
-          let token = row.value;
-
-          try {
-            const tokenData = JSON.parse(token);
-            token = tokenData?.token || tokenData;
-          } catch {
-            // Token is not JSON, use as-is
-          }
-
-          if (typeof token === "string" && token.includes(".")) {
-            resolve(this.processJWTToken(token));
-          } else {
-            resolve(typeof token === "string" ? token : null);
-          }
-        } catch (parseError) {
-          log.error("[Database] Token parsing error", parseError);
-          resolve(null);
+          const tokenData = JSON.parse(token);
+          token = tokenData?.token || tokenData;
+        } catch {
+          // Token is not JSON, use as-is
         }
-      });
-    });
+
+        if (typeof token === "string" && token.includes(".")) {
+          return this.processJWTToken(token);
+        } else {
+          return typeof token === "string" ? token : null;
+        }
+      } catch (parseError) {
+        log.error("[DatabaseService] Token parsing error", parseError);
+        return null;
+      }
+    } catch (err) {
+      log.error("[DatabaseService] Token extraction failed", err);
+      return null;
+    }
   }
 
   private processJWTToken(token: string): string | null {
@@ -560,82 +354,81 @@ export class DatabaseService {
 
       return token;
     } catch (err) {
-      log.error("[Database] JWT processing error", err);
+      log.error("[DatabaseService] JWT processing error", err);
       return token;
     }
   }
 
   private async extractUserInfoFromDB(dbPath: string): Promise<any | null> {
-    return new Promise((resolve, reject) => {
-      const db = new Database(dbPath, (err) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-      });
+    try {
+      const SQL = await this.initSqlJs();
+      const data = fs.readFileSync(dbPath);
+      const db = new SQL.Database(data);
 
       const query = `
-        SELECT key, value 
-        FROM ItemTable 
+        SELECT key, value
+        FROM ItemTable
         WHERE key IN (
           'cursorAuth/cachedEmail',
           'cursorAuth/stripeMembershipType'
         )
       `;
 
-      log.trace(`[Database] Executing user info query:`, {
+      log.trace(`[DatabaseService] Executing user info query:`, {
         sql: query,
         dbPath: dbPath,
       });
 
-      db.all(query, (err, rows: any[]) => {
-        db.close();
+      const stmt = db.prepare(query);
+      const rows: any[] = [];
+      while (stmt.step()) {
+        rows.push(stmt.getAsObject());
+      }
+      stmt.free();
+      db.close();
 
-        if (err) {
-          reject(err);
-          return;
-        }
-
-        log.trace(`[Database] User info query result:`, {
-          rowCount: rows?.length || 0,
-          keys: rows?.map((r) => r.key) || [],
-        });
-
-        try {
-          const userInfo: any = {};
-
-          for (const row of rows) {
-            try {
-              const value = typeof row.value === "string" ? row.value : row.value.toString();
-
-              switch (row.key) {
-                case "cursorAuth/cachedEmail":
-                  userInfo.email = value;
-                  break;
-
-                case "cursorAuth/stripeMembershipType":
-                  userInfo.membershipType = value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
-                  break;
-              }
-            } catch (error) {
-              log.debug(`[Database] Error processing row ${row.key}: ${error}`);
-            }
-          }
-
-          if (userInfo.email || userInfo.membershipType) {
-            log.trace(`[Database] Extracted user info:`, {
-              hasEmail: !!userInfo.email,
-              membershipType: userInfo.membershipType,
-            });
-            resolve(userInfo);
-          } else {
-            resolve(null);
-          }
-        } catch (err) {
-          log.error("[Database] User info processing error", err);
-          resolve(null);
-        }
+      log.trace(`[DatabaseService] User info query result:`, {
+        rowCount: rows?.length || 0,
+        keys: rows?.map((r) => r.key) || [],
       });
-    });
+
+      try {
+        const userInfo: any = {};
+
+        for (const row of rows) {
+          try {
+            const value = typeof row.value === "string" ? row.value : String(row.value);
+
+            switch (row.key) {
+              case "cursorAuth/cachedEmail":
+                userInfo.email = value;
+                break;
+
+              case "cursorAuth/stripeMembershipType":
+                userInfo.membershipType = value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+                break;
+            }
+          } catch (error) {
+            log.debug(`[DatabaseService] Error processing row ${row.key}: ${error}`);
+          }
+        }
+
+        if (userInfo.email || userInfo.membershipType) {
+          log.trace(`[DatabaseService] Extracted user info:`, {
+            hasEmail: !!userInfo.email,
+            membershipType: userInfo.membershipType,
+          });
+          return userInfo;
+        } else {
+          return null;
+        }
+      } catch (err) {
+        log.error("[DatabaseService] User info processing error", err);
+        return null;
+      }
+    } catch (err) {
+      log.error("[DatabaseService] User info extraction failed", err);
+      return null;
+    }
   }
 }

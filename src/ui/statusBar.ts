@@ -263,7 +263,7 @@ export class StatusBarProvider {
         const config = vscode.workspace.getConfiguration("cursorPulse");
         const showChargesCollapsed = config.get<boolean>("showChargesCollapsed", true);
 
-        if (showChargesCollapsed && recentItems.length > 2) {
+        if (showChargesCollapsed && recentItems.length > 1) {
           tooltip.appendMarkdown(
             `<details><summary>&nbsp;&nbsp;$(list-unordered) Usage-Based Charges (${recentItems.length} items)</summary>\n\n`,
           );
@@ -308,8 +308,8 @@ export class StatusBarProvider {
         }
       }
     } else if (stats.usageBasedPricing?.status) {
-      tooltip.appendMarkdown(`$(lock) **Usage-Based Pricing:** Disabled\n\n`);
-      tooltip.appendMarkdown(`&nbsp;&nbsp;&nbsp;&nbsp;$(info) Only slow requests available when quota exceeded\n\n`);
+      tooltip.appendMarkdown(`$(lock) **Usage-Based Pricing:** $(x) Disabled\n\n`);
+      tooltip.appendMarkdown(`&nbsp;&nbsp;&nbsp;&nbsp;$(info) Only slow requests when quota exceeded\n\n`);
     }
 
     if (usageEvents && usageEvents.usageEvents.length > 0) {
@@ -376,7 +376,7 @@ export class StatusBarProvider {
     tooltip.appendMarkdown(`---\n\n`);
 
     const actions = [];
-    actions.push(`$(gear) [Settings](command:cursorPulse.openSettings)`);
+    actions.push(`$(gear) [Settings](command:workbench.action.openSettings?%22@ext%3Alroolle.cursor-pulse%22)`);
 
     if (stats.usageBasedPricing?.status.isEnabled) {
       actions.push(`$(settings-gear) [Set Limit](command:cursorPulse.setUsageLimit)`);

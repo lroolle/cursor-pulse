@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { DatabaseService } from "./services/database";
 import { DataService } from "./services/dataService";
+import { CacheService } from "./services/cacheService";
 import { StatusBarProvider } from "./ui/statusBar";
 import { initializeLogger, log, showOutputChannel } from "./utils/logger";
 
@@ -12,29 +13,20 @@ export async function activate(context: vscode.ExtensionContext) {
   initializeLogger();
   log.info("Cursor Pulse extension activating...");
 
+  await CacheService.initialize(context);
   const dbService = DatabaseService.getInstance();
   const dataService = DataService.getInstance();
   statusBarProvider = new StatusBarProvider();
 
-  const refreshCommand = vscode.commands.registerCommand("cursorPulse.refresh", async () => {
-    log.info("Manual refresh requested");
-    await updateQuota(true); // Force refresh
-  });
-
   const softReloadCommand = vscode.commands.registerCommand("cursorPulse.softReload", async () => {
     log.info("Manual soft reload requested");
-    await updateQuota(true); // Force refresh
-  });
-
-  const reloadCommand = vscode.commands.registerCommand("cursorPulse.reload", async () => {
-    log.info("Manual reload requested (using legacy alias)");
-    await updateQuota(true); // Force refresh
+    await refresh(false);
   });
 
   const hardReloadCommand = vscode.commands.registerCommand("cursorPulse.hardReload", async () => {
     log.info("Hard reload requested - clearing all caches including permanent");
     await dataService.clearAllCacheIncludingPermanent();
-    await updateQuota(true); // Force refresh
+    await refresh(true); // Force refresh
     vscode.window.showInformationMessage(
       "🔄 Hard Reload Completed\n\n" + "✅ All caches cleared\n\n" + "📊 Data refreshed",
     );
@@ -135,7 +127,7 @@ export async function activate(context: vscode.ExtensionContext) {
       });
 
       if (!limitInput) {
-        return; // User cancelled
+        return;
       }
 
       const limitUSD = parseFloat(limitInput);
@@ -145,7 +137,7 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(
           `💳 Usage-Based Limit Updated\n\n` + `💰 New limit: $${limitUSD}\n\n` + `✅ Settings saved`,
         );
-        await updateQuota(true);
+        await refresh();
       } else {
         vscode.window.showErrorMessage(
           `❌ Failed to Update Limit\n\n` + `💡 Please check your connection and try again`,
@@ -177,7 +169,7 @@ export async function activate(context: vscode.ExtensionContext) {
         [
           {
             label: "Enable with default limit",
-            description: "Use Cursor's default spending limit",
+            description: "Use default spending limit($20)",
           },
           {
             label: "Enable with custom limit",
@@ -190,7 +182,7 @@ export async function activate(context: vscode.ExtensionContext) {
       );
 
       if (!setLimit) {
-        return; // User cancelled
+        return;
       }
 
       let limitUSD: number | undefined;
@@ -208,10 +200,15 @@ export async function activate(context: vscode.ExtensionContext) {
         });
 
         if (!limitInput) {
-          return; // User cancelled
+          return;
         }
 
         limitUSD = parseFloat(limitInput);
+      } else if (setLimit.label === "Enable with default limit") {
+        limitUSD = 20;
+      } else {
+        vscode.window.showErrorMessage("Invalid option selected");
+        return;
       }
 
       const success = await dataService.enableUsageBasedPricing(token, limitUSD);
@@ -221,7 +218,7 @@ export async function activate(context: vscode.ExtensionContext) {
           ? `🚀 Usage-Based Pricing Enabled\n\n💰 Spending limit: $${limitUSD}\n\n✅ You can now use fast requests beyond quota`
           : `🚀 Usage-Based Pricing Enabled\n\n✅ You can now use fast requests beyond quota`;
         vscode.window.showInformationMessage(message);
-        await updateQuota(true);
+        await refresh();
       } else {
         vscode.window.showErrorMessage(
           `❌ Failed to Enable Usage-Based Pricing\n\n` + `💡 Please check your connection and try again`,
@@ -267,7 +264,7 @@ export async function activate(context: vscode.ExtensionContext) {
             `⚠️ Only slow requests available when quota exceeded\n\n` +
             `✅ Settings saved`,
         );
-        await updateQuota(true);
+        await refresh();
       } else {
         vscode.window.showErrorMessage(
           `❌ Failed to Disable Usage-Based Pricing\n\n` + `💡 Please check your connection and try again`,
@@ -282,6 +279,18 @@ export async function activate(context: vscode.ExtensionContext) {
   });
 
   const showActionsCommand = vscode.commands.registerCommand("cursorPulse.showActions", async () => {
+    const token = await dbService.getCursorToken();
+    let usageBasedEnabled = false;
+
+    if (token) {
+      try {
+        const usageBasedStatus = await dataService.fetchUsageBasedStatus({ token, forceRefresh: false });
+        usageBasedEnabled = usageBasedStatus?.isEnabled || false;
+      } catch (error) {
+        log.warn("Failed to fetch usage-based status for actions menu", error);
+      }
+    }
+
     const actions = [
       "Soft Reload",
       "Hard Reload (Clear All Cache)",
@@ -289,19 +298,23 @@ export async function activate(context: vscode.ExtensionContext) {
       "Set Log Level",
       "Show Logs",
       "Clear Cache",
-      "Set Usage Limit",
-      "Enable Usage-Based Pricing",
-      "Disable Usage-Based Pricing",
-      "View Details",
-      "Debug Cache Status",
     ];
+
+    if (usageBasedEnabled) {
+      actions.push("Set Usage Limit", "Disable Usage-Based Pricing");
+    } else {
+      actions.push("Enable Usage-Based Pricing");
+    }
+
+    actions.push("View Details", "Debug Cache Status");
+
     const selection = await vscode.window.showQuickPick(actions, {
       placeHolder: "Choose an action",
     });
 
     switch (selection) {
       case "Soft Reload":
-        await updateQuota(true);
+        await refresh(false);
         break;
       case "Hard Reload (Clear All Cache)":
         await vscode.commands.executeCommand("cursorPulse.hardReload");
@@ -334,15 +347,6 @@ export async function activate(context: vscode.ExtensionContext) {
         // TODO: Implement details view in future iteration
         vscode.window.showInformationMessage("Detailed view coming soon!");
         break;
-      case "Debug Cache Status":
-        await dataService.debugCacheStatus();
-        vscode.window.showInformationMessage(
-          `🔍 Debug Information Generated\n\n` +
-            `📝 Cache status logged to output channel\n\n` +
-            `💡 Check the output panel for details`,
-        );
-        showOutputChannel();
-        break;
     }
   });
 
@@ -350,9 +354,10 @@ export async function activate(context: vscode.ExtensionContext) {
     log.info("=== CURSOR PULSE DEBUG CACHE STATUS ===");
     await dataService.debugCacheStatus();
 
-    const cacheKeys = ["analytics_data_1d", "analytics_data_7d", "analytics_data_30d", "api_user_info"];
+    const cacheService = CacheService.getInstance();
+    const cacheKeys = ["analytics:1d", "analytics:7d", "analytics:30d", "user:info"];
     for (const key of cacheKeys) {
-      await dbService.debugCacheEntry(key);
+      await cacheService.debugCacheEntry(key);
     }
 
     vscode.window.showInformationMessage(
@@ -373,7 +378,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }
     if (e.affectsConfiguration("cursorPulse.analyticsTimePeriod")) {
       log.info("Analytics time period changed, refreshing data...");
-      await updateQuota(true); // Force refresh to load new analytics period
+      await refresh(false); // Force refresh to load new analytics period
     }
     if (e.affectsConfiguration("cursorPulse.enableQuotaAnimation")) {
       log.debug("Quota animation setting changed");
@@ -390,15 +395,13 @@ export async function activate(context: vscode.ExtensionContext) {
     );
   }
 
-  await updateQuota();
+  await refresh();
 
   startRefreshTimer();
 
   context.subscriptions.push(
     statusBarProvider,
-    refreshCommand,
     softReloadCommand,
-    reloadCommand, // backward compatibility
     hardReloadCommand,
     settingsCommand,
     showLogsCommand,
@@ -414,7 +417,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   log.info("Cursor Pulse extension activated successfully");
 
-  async function updateQuota(forceRefresh = false) {
+  async function refresh(forceRefresh = false) {
     if (isUpdating && !forceRefresh) {
       return;
     }
@@ -523,7 +526,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const refreshInterval = config.get<number>("refreshInterval", 120);
     const intervalMs = Math.max(refreshInterval, 60) * 1000; // Minimum 60 seconds
 
-    updateTimer = setInterval(() => updateQuota(), intervalMs);
+    updateTimer = setInterval(() => refresh(), intervalMs);
     log.debug(`Refresh timer started with ${refreshInterval}s interval`);
   }
 }

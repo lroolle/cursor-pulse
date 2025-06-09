@@ -2,7 +2,7 @@
   "name": "cursor-pulse",
   "displayName": "Cursor Pulse",
   "description": "Elegant monitoring for Cursor AI subscription quota with clean status bar and rich analytics",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "publisher": "lroolle",
   "icon": "images/icon.png",
   "engines": {
@@ -120,7 +120,7 @@
             "7d",
             "30d"
           ],
-          "default": "1d",
+          "default": "7d",
           "description": "Time period for analytics data (1 day, 7 days, or 30 days)"
         },
         "cursorPulse.maxUsageEvents": {
@@ -171,6 +171,7 @@
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "~22.15.24",
+    "@types/sql.js": "^1.4.9",
     "@types/vscode": "^1.96.0",
     "@typescript-eslint/eslint-plugin": "^8.33.0",
     "@typescript-eslint/parser": "^8.33.0",
@@ -182,9 +183,6 @@
     "prettier": "^3.5.3",
     "typescript": "^5.8.3"
   },
-  "dependencies": {
-    "sqlite3": "^5.1.7"
-  },
   "repository": {
     "type": "git",
     "url": "https://github.com/lroolle/cursor-pulse.git"
@@ -192,5 +190,8 @@
   "bugs": {
     "url": "https://github.com/lroolle/cursor-pulse/issues"
   },
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "dependencies": {
+    "sql.js": "^1.13.0"
+  }
 }

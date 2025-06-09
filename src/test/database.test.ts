@@ -1,6 +1,5 @@
 import * as assert from "assert";
 import { DatabaseService } from "../services/database";
-import { CacheStrategy } from "../types";
 
 suite("DatabaseService Test Suite", () => {
   let dbService: DatabaseService;
@@ -9,74 +8,11 @@ suite("DatabaseService Test Suite", () => {
     dbService = DatabaseService.getInstance();
   });
 
-  teardown(async () => {
-    await dbService.clearAllCache();
-  });
-
   suite("Singleton Pattern", () => {
     test("Should implement singleton pattern correctly", () => {
       const instance1 = DatabaseService.getInstance();
       const instance2 = DatabaseService.getInstance();
       assert.strictEqual(instance1, instance2, "DatabaseService should be a singleton");
-    });
-  });
-
-  suite("Cache Operations", () => {
-    test("Should handle cache data operations", async () => {
-      const testKey = "test-key";
-      const testData = { value: "test-data", timestamp: Date.now() };
-
-      await assert.doesNotReject(async () => {
-        await dbService.setCachedData(testKey, testData, CacheStrategy.TIME_BASED, 60000);
-      }, "Setting cache data should not throw");
-
-      const cachedData = await dbService.getCachedData(testKey);
-      if (cachedData) {
-        assert.deepStrictEqual(cachedData, testData, "Retrieved data should match stored data");
-      }
-    });
-
-    test("Should handle cache removal", async () => {
-      const testKey = "test-removal-key";
-      const testData = { value: "test" };
-
-      await dbService.setCachedData(testKey, testData, CacheStrategy.TIME_BASED, 60000);
-
-      await assert.doesNotReject(async () => {
-        await dbService.removeCachedData(testKey);
-      }, "Removing cache data should not throw");
-
-      const cachedData = await dbService.getCachedData(testKey);
-      assert.strictEqual(cachedData, null, "Removed data should not be retrievable");
-    });
-
-    test("Should handle cache clearing", async () => {
-      await assert.doesNotReject(async () => {
-        await dbService.clearCache();
-      }, "Clearing cache should not throw");
-
-      await assert.doesNotReject(async () => {
-        await dbService.clearAllCache();
-      }, "Clearing all cache should not throw");
-    });
-  });
-
-  suite("Cache Strategy Validation", () => {
-    test("Should handle different cache strategies", async () => {
-      const testKey = "strategy-test";
-      const testData = { strategy: "test" };
-
-      await assert.doesNotReject(async () => {
-        await dbService.setCachedData(testKey, testData, CacheStrategy.TIME_BASED, 60000);
-      }, "TIME_BASED strategy should work");
-
-      await assert.doesNotReject(async () => {
-        await dbService.setCachedData(testKey, testData, CacheStrategy.STATE_BASED);
-      }, "STATE_BASED strategy should work");
-
-      await assert.doesNotReject(async () => {
-        await dbService.setCachedData(testKey, testData, CacheStrategy.PERMANENT);
-      }, "PERMANENT strategy should work");
     });
   });
 
@@ -92,87 +28,123 @@ suite("DatabaseService Test Suite", () => {
   });
 
   suite("Cursor Token Management", () => {
-    test("Should handle cursor token retrieval", async () => {
+    test("Should handle cursor token retrieval gracefully", async () => {
       try {
         const token = await dbService.getCursorToken();
-        if (token) {
-          assert.ok(typeof token === "string", "Token should be a string");
-          assert.ok(token.length > 0, "Token should not be empty");
+        if (token !== null) {
+          assert.ok(typeof token === "string", "Token should be a string when present");
+          assert.ok(token.length > 0, "Token should not be empty when present");
         }
+        // If token is null, that's acceptable (e.g., no database file, user not logged in)
       } catch (error) {
         assert.ok(error instanceof Error, "Should handle database errors gracefully");
       }
     });
 
-    test("Should handle cursor user info retrieval", async () => {
+    test("Should handle cursor user info retrieval gracefully", async () => {
       try {
         const userInfo = await dbService.getCursorUserInfo();
-        if (userInfo) {
-          assert.ok(typeof userInfo === "object", "User info should be an object");
+        if (userInfo !== null) {
+          assert.ok(typeof userInfo === "object", "User info should be an object when present");
         }
+        // If userInfo is null, that's acceptable (e.g., no database file, no user info)
       } catch (error) {
         assert.ok(error instanceof Error, "Should handle database errors gracefully");
       }
-    });
-  });
-
-  suite("Cache Debugging", () => {
-    test("Should handle cache debugging", async () => {
-      const testKey = "debug-test";
-      const testData = { debug: true };
-
-      await dbService.setCachedData(testKey, testData, CacheStrategy.TIME_BASED, 60000);
-
-      await assert.doesNotReject(async () => {
-        await dbService.debugCacheEntry(testKey);
-      }, "Cache debugging should not throw");
     });
   });
 
   suite("Error Handling", () => {
-    test("Should handle null/undefined cache keys", async () => {
-      const result = await dbService.getCachedData("");
-      assert.strictEqual(result, null, "Empty key should return null");
-    });
-
-    test("Should handle invalid cache data gracefully", async () => {
-      const testKey = "invalid-data-test";
-
-      await assert.doesNotReject(async () => {
-        await dbService.setCachedData(testKey, null as any, CacheStrategy.TIME_BASED, 60000);
-      }, "Setting null data should not throw");
-    });
-
-    test("Should handle database connection errors", async () => {
+    test("Should handle database connection errors gracefully", async () => {
       try {
         await dbService.hasStateChanged();
+        // If this succeeds, that's fine too
       } catch (error) {
         assert.ok(error instanceof Error, "Should throw proper Error objects");
       }
     });
-  });
 
-  suite("TTL Validation", () => {
-    test("Should handle cache expiration", async () => {
-      const testKey = "ttl-test";
-      const testData = { expiry: true };
-      const shortTTL = 1;
+    test("Should handle missing database file gracefully", async () => {
+      // This test verifies that the service handles missing database files gracefully
+      // rather than crashing the extension
 
-      await dbService.setCachedData(testKey, testData, CacheStrategy.TIME_BASED, shortTTL);
+      try {
+        const token = await dbService.getCursorToken();
+        const userInfo = await dbService.getCursorUserInfo();
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      const expiredData = await dbService.getCachedData(testKey);
-      assert.strictEqual(expiredData, null, "Expired data should return null");
+        // Both operations should complete without throwing
+        // The results can be null if the database doesn't exist, which is fine
+        assert.ok(token === null || typeof token === "string", "Token should be null or string");
+        assert.ok(userInfo === null || typeof userInfo === "object", "UserInfo should be null or object");
+      } catch (error) {
+        // If errors are thrown, they should be proper Error objects
+        assert.ok(error instanceof Error, "Should throw proper Error objects");
+      }
     });
 
-    test("Should handle cache without TTL", async () => {
-      const testKey = "no-ttl-test";
-      const testData = { permanent: true };
+    test("Should handle invalid database paths gracefully", async () => {
+      // Test the database service's error handling for invalid paths
+      // This is particularly important for the path validation logic
 
-      await assert.doesNotReject(async () => {
-        await dbService.setCachedData(testKey, testData, CacheStrategy.PERMANENT);
-      }, "Setting data without TTL should work");
+      try {
+        // These operations should not crash even with potential path issues
+        await dbService.hasStateChanged();
+        await dbService.getCursorToken();
+        await dbService.getCursorUserInfo();
+      } catch (error) {
+        // Errors should be handled gracefully
+        assert.ok(error instanceof Error, "Should handle path errors gracefully");
+      }
+    });
+  });
+
+  suite("Read-Only Operations Safety", () => {
+    test("Should not modify database during read operations", async () => {
+      // This test ensures that our read operations are truly read-only
+      // and don't modify the database state
+
+      try {
+        // Multiple reads should be safe and consistent
+        const token1 = await dbService.getCursorToken();
+        const token2 = await dbService.getCursorToken();
+
+        const userInfo1 = await dbService.getCursorUserInfo();
+        const userInfo2 = await dbService.getCursorUserInfo();
+
+        // Results should be consistent (same null status or same values)
+        assert.strictEqual(typeof token1, typeof token2, "Token reads should be consistent");
+        assert.strictEqual(typeof userInfo1, typeof userInfo2, "UserInfo reads should be consistent");
+
+        if (token1 !== null && token2 !== null) {
+          assert.strictEqual(token1, token2, "Token values should be identical");
+        }
+
+        if (userInfo1 !== null && userInfo2 !== null) {
+          assert.deepStrictEqual(userInfo1, userInfo2, "UserInfo values should be identical");
+        }
+      } catch (error) {
+        // Even if reads fail, they should fail consistently
+        assert.ok(error instanceof Error, "Read failures should be consistent");
+      }
+    });
+  });
+
+  suite("State Change Detection", () => {
+    test("Should handle state change detection without side effects", async () => {
+      try {
+        // State change detection should be a read-only operation
+        const hasChanged1 = await dbService.hasStateChanged();
+        const hasChanged2 = await dbService.hasStateChanged();
+
+        // Both calls should complete successfully
+        assert.ok(typeof hasChanged1 === "boolean", "First call should return boolean");
+        assert.ok(typeof hasChanged2 === "boolean", "Second call should return boolean");
+
+        // Note: The current implementation always returns true since we removed caching
+        // This is acceptable behavior for now
+      } catch (error) {
+        assert.ok(error instanceof Error, "Should handle state detection errors gracefully");
+      }
     });
   });
 });

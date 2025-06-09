@@ -1,11 +1,9 @@
 # Cursor Pulse
 
-![Cursor Pulse Logo](https://raw.githubusercontent.com/lroolle/cursor-pulse/main/images/icon.png)
-
 **Elegant monitoring for Cursor AI subscription quota with clean status bar integration and rich
 analytics**
 
-[![Version](https://img.shields.io/badge/version-0.1.0-blue)](https://github.com/lroolle/cursor-pulse)
+[![Version](https://img.shields.io/badge/version-0.3.0-blue)](https://github.com/lroolle/cursor-pulse)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 [![VSCode](https://img.shields.io/badge/VSCode-1.96.0+-blue)](https://code.visualstudio.com/)
 [![Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-blue)](https://marketplace.visualstudio.com/items?itemName=lroolle.cursor-pulse)
@@ -17,12 +15,13 @@ analytics**
 - **🔄 Real-time Quota Monitoring** - Track GPT-4 usage limits and usage-based pricing in your
   status bar
 - **📊 Rich Analytics Dashboard** - View detailed usage statistics, lines edited, and tabs accepted
-- **⚡ Caching System** - Efficient data fetching with intelligent refresh intervals (minimum 60s)
+- **⚡ Smart Caching** - Faster loading with intelligent data storage and refresh
 - **🎨 Visual Feedback** - Smooth animations and intuitive status indicators
 - **🔍 Comprehensive Tooltips** - Hover for detailed quota information and recent activity
 - **⚙️ Flexible Configuration** - Customize refresh intervals, display options, and notification
   preferences
 - **🛡️ Privacy-First Design** - Read-only local database access, no third-party data collection
+- **🔧 No Setup Required** - Works on all platforms without additional dependencies
 
 ## 🚀 Installation
 
@@ -117,7 +116,7 @@ Customize Cursor Pulse behavior through VS Code settings:
 
 | Setting                            | Type      | Default | Description                               |
 | ---------------------------------- | --------- | ------- | ----------------------------------------- |
-| `cursorPulse.analyticsTimePeriod`  | `string`  | `"1d"`  | Analytics time window (`1d`, `7d`, `30d`) |
+| `cursorPulse.analyticsTimePeriod`  | `string`  | `"7d"`  | Analytics time window (`1d`, `7d`, `30d`) |
 | `cursorPulse.maxUsageEvents`       | `number`  | `5`     | Max usage events in tooltip (1-20)        |
 | `cursorPulse.showChargesCollapsed` | `boolean` | `true`  | Collapse charges section in tooltip       |
 
@@ -173,16 +172,17 @@ Enable detailed logging for troubleshooting:
 ### Performance Optimization
 
 - **Minimum refresh interval**: 60 seconds (enforced for API rate limiting)
-- **Cache strategy**: Intelligent caching with automatic invalidation
+- **Smart caching**: Automatically refreshes when needed
 - **Resource cleanup**: Proper disposal of timers and event listeners
 
 ## 🔒 Privacy & Security
 
 Cursor Pulse is designed with privacy as a core principle:
 
-- **✅ Local Data Only** - Reads from your local Cursor database
+- **✅ Local Data Only** - Reads from your local Cursor database safely
 - **✅ No Third-Party Services** - Direct communication with Cursor APIs only
-- **✅ Read-Only Access** - Never modifies your Cursor data or settings
+- **✅ Read-Only Access** - Never modifies your Cursor data or state database
+- **✅ Safe Storage** - Uses VSCode's extension storage, never modifies Cursor files
 - **✅ Session Token Reuse** - Uses your existing Cursor authentication
 - **✅ No Data Collection** - No telemetry or usage data sent anywhere
 

@@ -1,17 +1,47 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
 import { StatusBarProvider } from "../ui/statusBar";
+import { CacheService } from "../services/cacheService";
 import { QuotaData, CursorStats, UserInfo, FilteredUsageResponse, AnalyticsData, UsageEvent } from "../types";
+
+// Mock extension context for testing
+class MockExtensionContext implements Partial<vscode.ExtensionContext> {
+  private storage = new Map<string, any>();
+
+  globalState: vscode.Memento & { setKeysForSync(keys: readonly string[]): void } = {
+    get: <T>(key: string, defaultValue?: T): T => {
+      return this.storage.get(key) ?? defaultValue;
+    },
+    update: async (key: string, value: any): Promise<void> => {
+      this.storage.set(key, value);
+    },
+    keys: (): readonly string[] => {
+      return Array.from(this.storage.keys());
+    },
+    setKeysForSync: (): void => {},
+  };
+
+  globalStorageUri: vscode.Uri = vscode.Uri.file("/tmp/cursor-pulse-test");
+}
 
 suite("StatusBarProvider Test Suite", () => {
   let statusBarProvider: StatusBarProvider;
+  let mockContext: MockExtensionContext;
+
+  suiteSetup(async () => {
+    // Initialize CacheService before StatusBarProvider
+    mockContext = new MockExtensionContext();
+    await CacheService.initialize(mockContext as unknown as vscode.ExtensionContext);
+  });
 
   setup(() => {
     statusBarProvider = new StatusBarProvider();
   });
 
   teardown(() => {
-    statusBarProvider.dispose();
+    if (statusBarProvider) {
+      statusBarProvider.dispose();
+    }
   });
 
   suite("Initialization Tests", () => {

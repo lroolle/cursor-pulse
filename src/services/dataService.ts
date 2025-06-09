@@ -13,6 +13,7 @@ import {
 } from "../types";
 import { ApiService } from "./api";
 import { DatabaseService } from "./database";
+import { CacheService } from "./cacheService";
 import { log } from "../utils/logger";
 import { DateUtils } from "../utils/dateUtils";
 
@@ -40,6 +41,7 @@ export class DataService {
   private static instance: DataService;
   private readonly apiService: ApiService;
   private readonly dbService: DatabaseService;
+  private readonly cacheService: CacheService;
   private lastFetchContext: DataFetchContext | null = null;
 
   private static readonly CACHE_TTL = {
@@ -57,6 +59,7 @@ export class DataService {
   private constructor() {
     this.apiService = ApiService.getInstance();
     this.dbService = DatabaseService.getInstance();
+    this.cacheService = CacheService.getInstance();
   }
 
   static getInstance(): DataService {
@@ -67,60 +70,14 @@ export class DataService {
   }
 
   async fetchPremiumQuota(options: DataFetchOptions): Promise<QuotaData | null> {
-    const cacheKey = "premium_quota";
-    log.trace("[DataService] Fetching premium quota:", { options, cacheKey });
-
-    if (!options.forceRefresh) {
-      const cached = await this.dbService.getCachedData<QuotaData>(cacheKey);
-      if (cached) {
-        this.updateFetchContext(cached, false);
-        log.trace("[DataService] Premium quota cache hit:", {
-          data: cached,
-          context: this.lastFetchContext,
-        });
-        return cached;
-      }
-    }
-
-    const usageResponse = await this.apiService.fetchUsageData(options.token);
-    if (!usageResponse) {
-      return null;
-    }
-
-    log.trace("[DataService] Raw usage response:", {
-      gpt4Data: usageResponse["gpt-4"],
-      startOfMonth: usageResponse.startOfMonth,
-    });
-
-    const quota: QuotaData = {
-      current: usageResponse["gpt-4"].numRequests,
-      limit: usageResponse["gpt-4"].maxRequestUsage,
-      percentage: Math.round((usageResponse["gpt-4"].numRequests / usageResponse["gpt-4"].maxRequestUsage) * 100),
-      period: DateUtils.calculatePeriod(usageResponse.startOfMonth),
-      lastUpdated: new Date(),
-    };
-
-    const ttl =
-      quota.current >= quota.limit
-        ? DataService.CACHE_TTL.PREMIUM_QUOTA_EXHAUSTED
-        : DataService.CACHE_TTL.PREMIUM_QUOTA_NORMAL;
-    log.trace("[DataService] Setting quota cache:", {
-      quota,
-      ttl,
-      cacheKey,
-    });
-
-    await this.dbService.setCachedData(cacheKey, quota, CacheStrategy.TIME_BASED, ttl);
-
-    this.updateFetchContext(quota, false);
-    return quota;
+    return this.fetchQuota(options);
   }
 
   async fetchQuota(options: DataFetchOptions): Promise<QuotaData | null> {
-    const cacheKey = "premium_quota_detailed";
+    const cacheKey = "quota:premium";
 
     if (!options.forceRefresh) {
-      const cached = await this.dbService.getCachedData<QuotaData>(cacheKey);
+      const cached = await this.cacheService.getCachedData<QuotaData>(cacheKey);
       if (cached) {
         log.trace("[DataService] Premium quota cache hit");
         this.updateFetchContext(cached, false);
@@ -146,17 +103,24 @@ export class DataService {
       quota.current >= quota.limit
         ? DataService.CACHE_TTL.PREMIUM_QUOTA_EXHAUSTED
         : DataService.CACHE_TTL.PREMIUM_QUOTA_NORMAL;
-    await this.dbService.setCachedData(cacheKey, quota, CacheStrategy.TIME_BASED, ttl);
+
+    log.trace("[DataService] Setting quota cache:", {
+      quota,
+      ttl,
+      cacheKey,
+    });
+
+    await this.cacheService.setCachedData(cacheKey, quota, CacheStrategy.TIME_BASED, ttl);
 
     this.updateFetchContext(quota, false);
     return quota;
   }
 
   async fetchUsageBasedPricingData(options: DataFetchOptions): Promise<any | null> {
-    const cacheKey = "usage_based_pricing";
+    const cacheKey = "pricing:data";
 
     if (!options.forceRefresh) {
-      const cached = await this.dbService.getCachedData<any>(cacheKey);
+      const cached = await this.cacheService.getCachedData<any>(cacheKey);
       if (cached) {
         log.trace("[DataService] Usage-based pricing cache hit");
         return cached;
@@ -176,7 +140,7 @@ export class DataService {
     };
 
     if (!status.isEnabled) {
-      await this.dbService.setCachedData(
+      await this.cacheService.setCachedData(
         cacheKey,
         { status, currentMonth: null, lastMonth: null },
         CacheStrategy.TIME_BASED,
@@ -219,7 +183,7 @@ export class DataService {
       ? DataService.CACHE_TTL.USAGE_BASED_PRICING_EXHAUSTED
       : DataService.CACHE_TTL.USAGE_BASED_PRICING_NORMAL;
 
-    await this.dbService.setCachedData(cacheKey, usageBasedPricingData, CacheStrategy.TIME_BASED, ttl);
+    await this.cacheService.setCachedData(cacheKey, usageBasedPricingData, CacheStrategy.TIME_BASED, ttl);
 
     return usageBasedPricingData;
   }
@@ -229,12 +193,25 @@ export class DataService {
     month: number,
     year: number,
   ): Promise<any> {
-    const cacheKey = `monthly_usage_${month}_${year}`;
+    const cacheKey = `usage:${year}-${String(month).padStart(2, "0")}`;
     const currentDate = new Date();
-    const isCurrentMonth = month === currentDate.getMonth() + 1 && year === currentDate.getFullYear();
+    const currentMonth = currentDate.getMonth() + 1;
+    const currentYear = currentDate.getFullYear();
+
+    const isCurrentMonth = month === currentMonth && year === currentYear;
+
+    // Calculate previous month
+    const prevMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+    const prevYear = currentMonth === 1 ? currentYear - 1 : currentYear;
+    const isPreviousMonth = month === prevMonth && year === prevYear;
+
+    // Cursor can accumulate usage-based charges into the previous month when quota is exhausted
+    // Only treat previous month as active if quota is currently exhausted
+    const isQuotaExhausted = this.lastFetchContext?.isQuotaExhausted || false;
+    const isActiveBillingMonth = isCurrentMonth || (isPreviousMonth && isQuotaExhausted);
 
     if (!options.forceRefresh) {
-      const cached = await this.dbService.getCachedData<any>(cacheKey);
+      const cached = await this.cacheService.getCachedData<any>(cacheKey);
       if (cached) {
         log.trace(`[DataService] Monthly usage cache hit for ${year}-${month}`);
         return cached;
@@ -248,17 +225,17 @@ export class DataService {
       const monthlyUsage = this.parseMonthlyUsage(response);
 
       if (monthlyUsage) {
-        const strategy = isCurrentMonth ? CacheStrategy.TIME_BASED : CacheStrategy.PERMANENT;
+        const strategy = isActiveBillingMonth ? CacheStrategy.TIME_BASED : CacheStrategy.PERMANENT;
         let ttl = 0;
 
-        if (isCurrentMonth) {
+        if (isActiveBillingMonth) {
           const isQuotaExhausted = this.lastFetchContext?.isQuotaExhausted || false;
           ttl = isQuotaExhausted
             ? DataService.CACHE_TTL.USAGE_BASED_PRICING_EXHAUSTED
             : DataService.CACHE_TTL.USAGE_BASED_PRICING_NORMAL;
         }
 
-        await this.dbService.setCachedData(cacheKey, monthlyUsage, strategy, ttl, `${month}_${year}`);
+        await this.cacheService.setCachedData(cacheKey, monthlyUsage, strategy, ttl, `${month}_${year}`);
         return monthlyUsage;
       }
     }
@@ -271,7 +248,7 @@ export class DataService {
       return true;
     }
 
-    const cachedStatus = await this.dbService.getCachedData<UsageBasedStatus>("usage_based_status");
+    const cachedStatus = await this.cacheService.getCachedData<UsageBasedStatus>("pricing:status");
     if (cachedStatus?.isEnabled) {
       return true;
     }
@@ -369,10 +346,10 @@ export class DataService {
   }
 
   private async fetchApiUserInfo(options: DataFetchOptions): Promise<AuthUserInfo | null> {
-    const cacheKey = "api_user_info";
+    const cacheKey = "user:info";
 
     if (!options.forceRefresh) {
-      const cached = await this.dbService.getCachedData<AuthUserInfo>(cacheKey);
+      const cached = await this.cacheService.getCachedData<AuthUserInfo>(cacheKey);
       if (cached) {
         log.trace("[DataService] API user info cache hit");
         return cached;
@@ -391,7 +368,7 @@ export class DataService {
         picture: response.picture,
       };
 
-      await this.dbService.setCachedData(
+      await this.cacheService.setCachedData(
         cacheKey,
         authUserInfo,
         CacheStrategy.TIME_BASED,
@@ -447,10 +424,10 @@ export class DataService {
     daysBack: number = 7,
     pageSize: number = 100,
   ): Promise<FilteredUsageResponse | null> {
-    const cacheKey = `usage_events_${daysBack}_${pageSize}`;
+    const cacheKey = `events:${daysBack}d:${pageSize}`;
 
     if (!options.forceRefresh) {
-      const cached = await this.dbService.getCachedData<FilteredUsageResponse>(cacheKey);
+      const cached = await this.cacheService.getCachedData<FilteredUsageResponse>(cacheKey);
       if (cached) {
         log.trace("[DataService] Usage events cache data:", JSON.stringify(cached, null, 2));
         return cached;
@@ -466,12 +443,11 @@ export class DataService {
         totalUsageEventsCount: response.totalUsageEventsCount || 0,
       };
 
-      await this.dbService.setCachedData(
+      await this.cacheService.setCachedData(
         cacheKey,
         usageEvents,
-        CacheStrategy.PARAM_BASED,
+        CacheStrategy.TIME_BASED,
         DataService.CACHE_TTL.USAGE_EVENTS,
-        `${daysBack}_${pageSize}`,
       );
 
       log.trace("[DataService] Fresh usage events data:", JSON.stringify(usageEvents, null, 2));
@@ -482,10 +458,10 @@ export class DataService {
   }
 
   async fetchAnalyticsData(options: DataFetchOptions, timePeriod: string = "1d"): Promise<AnalyticsData | null> {
-    const cacheKey = `analytics_data_${timePeriod}`;
+    const cacheKey = `analytics:${timePeriod}`;
 
     if (!options.forceRefresh) {
-      const cached = await this.dbService.getCachedData<AnalyticsData>(cacheKey);
+      const cached = await this.cacheService.getCachedData<AnalyticsData>(cacheKey);
       if (cached) {
         log.trace(`[DataService] Analytics cache data for ${timePeriod}:`, JSON.stringify(cached, null, 2));
         return cached;
@@ -520,7 +496,7 @@ export class DataService {
           };
 
           const cacheTTL = this.getAnalyticsCacheTTL(timePeriod);
-          await this.dbService.setCachedData(cacheKey, analyticsData, CacheStrategy.PARAM_BASED, cacheTTL, timePeriod);
+          await this.cacheService.setCachedData(cacheKey, analyticsData, CacheStrategy.TIME_BASED, cacheTTL);
 
           log.trace(
             `[DataService] Processed analytics data for ${timePeriod}:`,
@@ -532,7 +508,7 @@ export class DataService {
             `[DataService] API returned period-only response for ${timePeriod}, checking for existing cached data`,
           );
 
-          const existingCached = await this.dbService.getCachedData<AnalyticsData>(cacheKey);
+          const existingCached = await this.cacheService.getCachedData<AnalyticsData>(cacheKey);
           if (existingCached) {
             log.debug(`[DataService] Using existing cached analytics data for ${timePeriod}`);
             return existingCached;
@@ -560,7 +536,7 @@ export class DataService {
     } catch (error) {
       log.error(`[DataService] Failed to fetch analytics data for ${timePeriod}`, error);
 
-      const cachedFallback = await this.dbService.getCachedData<AnalyticsData>(cacheKey);
+      const cachedFallback = await this.cacheService.getCachedData<AnalyticsData>(cacheKey);
       if (cachedFallback) {
         log.debug(`[DataService] Using cached fallback analytics data for ${timePeriod}`);
         return cachedFallback;
@@ -588,10 +564,10 @@ export class DataService {
   }
 
   async fetchUsageBasedStatus(options: DataFetchOptions): Promise<UsageBasedStatus | null> {
-    const cacheKey = "usage_based_status";
+    const cacheKey = "pricing:status";
 
     if (!options.forceRefresh) {
-      const cached = await this.dbService.getCachedData<UsageBasedStatus>(cacheKey);
+      const cached = await this.cacheService.getCachedData<UsageBasedStatus>(cacheKey);
       if (cached) {
         log.trace("[DataService] Usage-based status cache hit");
         return cached;
@@ -607,7 +583,7 @@ export class DataService {
         limit: response.hardLimit,
       };
 
-      await this.dbService.setCachedData(cacheKey, status, CacheStrategy.TIME_BASED, 60 * 60 * 1000);
+      await this.cacheService.setCachedData(cacheKey, status, CacheStrategy.TIME_BASED, 60 * 60 * 1000);
 
       return status;
     }
@@ -616,10 +592,10 @@ export class DataService {
   }
 
   async getCurrentMonthPeriod(forceRefresh: boolean = false): Promise<PeriodInfo> {
-    const cacheKey = "current_month_period";
+    const cacheKey = "period:current";
 
     if (!forceRefresh) {
-      const cached = await this.dbService.getCachedData<PeriodInfo>(cacheKey);
+      const cached = await this.cacheService.getCachedData<PeriodInfo>(cacheKey);
       if (cached) {
         return cached;
       }
@@ -628,16 +604,16 @@ export class DataService {
     log.debug("[DataService] Calculating current month period");
     const periodInfo = DateUtils.calculateCurrentMonthPeriod();
 
-    await this.dbService.setCachedData(cacheKey, periodInfo, CacheStrategy.TIME_BASED, 60 * 60 * 1000);
+    await this.cacheService.setCachedData(cacheKey, periodInfo, CacheStrategy.TIME_BASED, 60 * 60 * 1000);
 
     return periodInfo;
   }
 
   async getUsageBasedPeriod(forceRefresh: boolean = false): Promise<PeriodInfo> {
-    const cacheKey = "usage_based_period";
+    const cacheKey = "period:billing";
 
     if (!forceRefresh) {
-      const cached = await this.dbService.getCachedData<PeriodInfo>(cacheKey);
+      const cached = await this.cacheService.getCachedData<PeriodInfo>(cacheKey);
       if (cached) {
         return cached;
       }
@@ -646,14 +622,14 @@ export class DataService {
     log.debug("[DataService] Calculating usage-based billing period");
     const periodInfo = DateUtils.calculateUsageBasedPeriod();
 
-    await this.dbService.setCachedData(cacheKey, periodInfo, CacheStrategy.TIME_BASED, 60 * 60 * 1000);
+    await this.cacheService.setCachedData(cacheKey, periodInfo, CacheStrategy.TIME_BASED, 60 * 60 * 1000);
 
     return periodInfo;
   }
 
   async fetchAllUsageData(options: DataFetchOptions, analyticsTimePeriod: string = "1d"): Promise<UsageData | null> {
     try {
-      log.debug("[DataService] Starting comprehensive usage data fetch");
+      log.debug("[DataService] Starting fetch all usage data");
       log.trace("[DataService] Fetch parameters:", {
         forceRefresh: options.forceRefresh,
         analyticsTimePeriod,
@@ -684,30 +660,19 @@ export class DataService {
         fetchPromises.push(Promise.resolve(null));
       }
 
-      // User info fetching logic
+      // User info fetching logic - respect cache TTL
       const isFullRefresh = options.forceRefresh;
-      let shouldFetchUserInfo = isFullRefresh;
-      if (!shouldFetchUserInfo && this.lastFetchContext) {
-        shouldFetchUserInfo = Date.now() - this.lastFetchContext.lastQuotaCheck > 5 * 60 * 1000;
-      }
 
-      log.trace("[DataService] User info fetch decision:", {
-        shouldFetch: shouldFetchUserInfo,
-        isFullRefresh,
-        timeSinceLastCheck: this.lastFetchContext
-          ? Math.round((Date.now() - this.lastFetchContext.lastQuotaCheck) / 1000) + "s"
-          : "no context",
-      });
-
-      if (shouldFetchUserInfo || !this.lastFetchContext) {
+      if (isFullRefresh) {
         fetchPromises.push(this.fetchUserInfo(options));
       } else {
-        const cachedUserInfo = await this.dbService.getCachedData<AuthUserInfo>("api_user_info");
+        // Let CacheService decide based on its TTL for user info
+        const cachedUserInfo = await this.cacheService.getCachedData<AuthUserInfo>("user:info");
         if (cachedUserInfo) {
-          const dbUserInfo = await this.fetchDbUserInfo();
+          const dbUserInfo = await this.fetchDbUserInfo(); // DB info is cheap
           fetchPromises.push(Promise.resolve(this.combineUserInfo(cachedUserInfo, dbUserInfo)));
         } else {
-          fetchPromises.push(this.fetchUserInfo(options));
+          fetchPromises.push(this.fetchUserInfo(options)); // Cache miss, fetch from API
         }
       }
 
@@ -747,13 +712,13 @@ export class DataService {
   }
 
   async clearAllCache(): Promise<void> {
-    await this.dbService.clearCache();
+    await this.cacheService.clearCache();
     this.lastFetchContext = null;
     log.debug("[DataService] All cached data cleared");
   }
 
   async clearAllCacheIncludingPermanent(): Promise<void> {
-    await this.dbService.clearAllCache();
+    await this.cacheService.clearCache();
     this.lastFetchContext = null;
     log.debug("[DataService] All cached data cleared including permanent");
   }
@@ -772,14 +737,13 @@ export class DataService {
       const lastYear = currentMonth === 1 ? currentYear - 1 : currentYear;
 
       const cacheKeysToInvalidate = [
-        `monthly_usage_${currentMonth}_${currentYear}`,
-        `monthly_usage_${lastMonth}_${lastYear}`,
-        "usage_based_pricing",
-        "premium_quota",
-        "premium_quota_detailed",
+        `usage:${currentYear}-${String(currentMonth).padStart(2, "0")}`,
+        `usage:${lastYear}-${String(lastMonth).padStart(2, "0")}`,
+        "pricing:data",
+        "quota:premium",
       ];
 
-      await Promise.all(cacheKeysToInvalidate.map((key) => this.dbService.removeCachedData(key)));
+      await Promise.all(cacheKeysToInvalidate.map((key) => this.cacheService.removeCachedData(key)));
 
       log.debug("[DataService] Usage-based pricing caches invalidated due to quota status change");
     } catch (error) {
@@ -807,8 +771,8 @@ export class DataService {
     const success = await this.apiService.setUsageBasedLimit(token, limitUSD);
     if (success) {
       log.debug("[DataService] Invalidating usage-based caches after limit change");
-      await this.dbService.removeCachedData("usage_based_status");
-      await this.dbService.removeCachedData("usage_based_pricing");
+      await this.cacheService.removeCachedData("pricing:status");
+      await this.cacheService.removeCachedData("pricing:data");
       this.lastFetchContext = null; // Reset context to force fresh fetch
     }
     return success;
@@ -818,8 +782,8 @@ export class DataService {
     const success = await this.apiService.enableUsageBasedPricing(token, limitUSD);
     if (success) {
       log.debug("[DataService] Invalidating usage-based caches after enabling");
-      await this.dbService.removeCachedData("usage_based_status");
-      await this.dbService.removeCachedData("usage_based_pricing");
+      await this.cacheService.removeCachedData("pricing:status");
+      await this.cacheService.removeCachedData("pricing:data");
       this.lastFetchContext = null; // Reset context to force fresh fetch
     }
     return success;
@@ -829,8 +793,8 @@ export class DataService {
     const success = await this.apiService.disableUsageBasedPricing(token);
     if (success) {
       log.debug("[DataService] Invalidating usage-based caches after disabling");
-      await this.dbService.removeCachedData("usage_based_status");
-      await this.dbService.removeCachedData("usage_based_pricing");
+      await this.cacheService.removeCachedData("pricing:status");
+      await this.cacheService.removeCachedData("pricing:data");
       this.lastFetchContext = null; // Reset context to force fresh fetch
     }
     return success;
@@ -838,19 +802,18 @@ export class DataService {
 
   async debugCacheStatus(): Promise<void> {
     const cacheKeys = [
-      "premium_quota",
-      "premium_quota_detailed",
-      "usage_based_pricing",
-      "api_user_info",
-      "usage_events_7_100",
-      "analytics_data_1d",
-      "analytics_data_7d",
-      "analytics_data_30d",
+      "quota:premium",
+      "pricing:data",
+      "user:info",
+      "events:7d:100",
+      "analytics:1d",
+      "analytics:7d",
+      "analytics:30d",
     ];
 
     log.debug("[DataService] Cache status check:");
     for (const key of cacheKeys) {
-      const cached = await this.dbService.getCachedData<any>(key);
+      const cached = await this.cacheService.getCachedData<any>(key);
       if (cached) {
         log.debug(`  ✓ ${key}: cached (${typeof cached})`);
       } else {

@@ -27,7 +27,6 @@ suite("Extension Test Suite", () => {
       const commands = await vscode.commands.getCommands(true);
 
       const requiredCommands = [
-        "cursorPulse.refresh",
         "cursorPulse.softReload",
         "cursorPulse.hardReload",
         "cursorPulse.openSettings",
@@ -68,7 +67,7 @@ suite("Extension Test Suite", () => {
       assert.strictEqual(config.get("refreshInterval"), 120, "Default refresh interval should be 120");
       assert.strictEqual(config.get("showPercentage"), true, "Default showPercentage should be true");
       assert.strictEqual(config.get("enableNotifications"), true, "Default enableNotifications should be true");
-      assert.strictEqual(config.get("analyticsTimePeriod"), "1d", "Default analyticsTimePeriod should be 1d");
+      assert.strictEqual(config.get("analyticsTimePeriod"), "7d", "Default analyticsTimePeriod should be 7d");
       assert.strictEqual(config.get("enableQuotaAnimation"), true, "Default enableQuotaAnimation should be true");
       assert.strictEqual(config.get("showChargesCollapsed"), true, "Default showChargesCollapsed should be true");
       assert.strictEqual(config.get("maxUsageEvents"), 5, "Default maxUsageEvents should be 5");

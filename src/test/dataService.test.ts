@@ -1,17 +1,47 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
 import { DataService } from "../services/dataService";
+import { CacheService } from "../services/cacheService";
 import { QuotaData, CursorStats, UserInfo, FilteredUsageResponse, AnalyticsData } from "../types";
+
+// Mock extension context for testing
+class MockExtensionContext implements Partial<vscode.ExtensionContext> {
+  private storage = new Map<string, any>();
+
+  globalState: vscode.Memento & { setKeysForSync(keys: readonly string[]): void } = {
+    get: <T>(key: string, defaultValue?: T): T => {
+      return this.storage.get(key) ?? defaultValue;
+    },
+    update: async (key: string, value: any): Promise<void> => {
+      this.storage.set(key, value);
+    },
+    keys: (): readonly string[] => {
+      return Array.from(this.storage.keys());
+    },
+    setKeysForSync: (): void => {},
+  };
+
+  globalStorageUri: vscode.Uri = vscode.Uri.file("/tmp/cursor-pulse-test");
+}
 
 suite("DataService Test Suite", () => {
   let dataService: DataService;
+  let mockContext: MockExtensionContext;
+
+  suiteSetup(async () => {
+    // Initialize CacheService before DataService
+    mockContext = new MockExtensionContext();
+    await CacheService.initialize(mockContext as unknown as vscode.ExtensionContext);
+  });
 
   setup(() => {
     dataService = DataService.getInstance();
   });
 
   teardown(async () => {
-    await dataService.clearAllCache();
+    if (dataService) {
+      await dataService.clearAllCache();
+    }
   });
 
   suite("Singleton Pattern", () => {
