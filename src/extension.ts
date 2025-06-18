@@ -568,7 +568,7 @@ export async function activate(context: vscode.ExtensionContext) {
           currentModel === PricingModelType.NEW_RATE_LIMITED &&
           lastKnownPricingModel === PricingModelType.LEGACY_QUOTA
         ) {
-          message = "🎉 Your Cursor plan now has unlimited requests with rate limits! Enjoy the enhanced experience.";
+          message = "🎉 Your Cursor plan now has unlimited requests with rate limits! No more quota restrictions.";
           isUpgrade = true;
         } else if (
           currentModel === PricingModelType.LEGACY_QUOTA &&

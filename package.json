@@ -125,7 +125,7 @@
         },
         "cursorPulse.maxUsageEvents": {
           "type": "number",
-          "default": 10,
+          "default": 5,
           "minimum": 1,
           "maximum": 20,
           "description": "Maximum number of usage events to display in tooltip (1-20)"

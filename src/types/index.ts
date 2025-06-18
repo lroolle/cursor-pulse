@@ -246,7 +246,7 @@ export interface NewPricingStatus {
   hasOptedOut?: boolean;
 }
 
-export interface EnhancedQuotaData extends QuotaData {
+export interface QuotaStateData extends QuotaData {
   isLegacyQuota: boolean;
   rateLimitStatus?: {
     isBurstBucketEmpty: boolean;
