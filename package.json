@@ -125,7 +125,7 @@
         },
         "cursorPulse.maxUsageEvents": {
           "type": "number",
-          "default": 5,
+          "default": 10,
           "minimum": 1,
           "maximum": 20,
           "description": "Maximum number of usage events to display in tooltip (1-20)"
@@ -144,6 +144,16 @@
           "type": "string",
           "default": "",
           "description": "Custom path to the Cursor database file. Leave empty to use default location."
+        },
+        "cursorPulse.forceLegacyDisplayMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Force legacy quota display mode even for users on new unlimited pricing. Useful for consistency or compatibility."
+        },
+        "cursorPulse.internal.lastKnownPricingModel": {
+          "type": "string",
+          "default": "",
+          "description": "[Internal] Last known pricing model for migration detection. Do not modify manually."
         }
       }
     }

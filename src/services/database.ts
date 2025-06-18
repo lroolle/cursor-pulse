@@ -133,19 +133,15 @@ export class DatabaseService {
 
   private validateAndNormalizePath(customPath: string): string | null {
     try {
-      // Normalize the path to resolve relative components
       const normalized = path.normalize(customPath);
 
-      // Check for path traversal attempts
       if (normalized.includes("..")) {
         log.warn(`[DatabaseService] Path traversal detected in: ${customPath}`);
         return null;
       }
 
-      // Ensure path is absolute for security
       const resolved = path.resolve(normalized);
 
-      // Validate file extension
       if (!resolved.endsWith(".vscdb") && !resolved.endsWith(".db")) {
         log.warn(`[DatabaseService] Invalid database file extension: ${resolved}`);
         return null;

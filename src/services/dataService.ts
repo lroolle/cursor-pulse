@@ -10,6 +10,9 @@ import {
   MonthlyUsage,
   UsageItem,
   PeriodInfo,
+  NewPricingStatus,
+  PricingModelType,
+  UsageData,
 } from "../types";
 import { ApiService } from "./api";
 import { DatabaseService } from "./database";
@@ -20,14 +23,6 @@ import { DateUtils } from "../utils/dateUtils";
 export interface DataFetchOptions {
   forceRefresh?: boolean;
   token: string;
-}
-
-export interface UsageData {
-  quota: QuotaData;
-  stats: CursorStats;
-  userInfo: UserInfo | null;
-  usageEvents: FilteredUsageResponse | null;
-  analyticsData: AnalyticsData | null;
 }
 
 export interface DataFetchContext {
@@ -43,6 +38,7 @@ export class DataService {
   private readonly dbService: DatabaseService;
   private readonly cacheService: CacheService;
   private lastFetchContext: DataFetchContext | null = null;
+  private pricingStatusCache: NewPricingStatus | null = null;
 
   private static readonly CACHE_TTL = {
     PREMIUM_QUOTA_NORMAL: 1 * 60 * 1000,
@@ -54,6 +50,7 @@ export class DataService {
     ANALYTICS_1D: 1 * 60 * 1000,
     ANALYTICS_7D: 15 * 60 * 1000,
     ANALYTICS_30D: 60 * 60 * 1000,
+    PRICING_MODEL: 24 * 60 * 60 * 1000,
   };
 
   private constructor() {
@@ -91,10 +88,20 @@ export class DataService {
       return null;
     }
 
+    const current = usageResponse["gpt-4"].numRequests ?? 0;
+    const limit = usageResponse["gpt-4"].maxRequestUsage ?? null;
+
+    if (limit === null || limit === undefined) {
+      log.debug("[DataService] Quota limit is null/undefined, likely new pricing user");
+      return null;
+    }
+
+    const percentage = limit > 0 ? Math.round((current / limit) * 100) : 0;
+
     const quota: QuotaData = {
-      current: usageResponse["gpt-4"].numRequests,
-      limit: usageResponse["gpt-4"].maxRequestUsage,
-      percentage: Math.round((usageResponse["gpt-4"].numRequests / usageResponse["gpt-4"].maxRequestUsage) * 100),
+      current,
+      limit,
+      percentage,
       period: DateUtils.calculatePeriod(usageResponse.startOfMonth),
       lastUpdated: new Date(),
     };
@@ -134,10 +141,21 @@ export class DataService {
       return null;
     }
 
+    // API behavior:
+    // - When enabled: returns {"hardLimit": number}
+    // - When disabled: returns {"noUsageBasedAllowed": true}
+    const isEnabled = usageBasedStatusResponse.noUsageBasedAllowed !== true;
+
     const status: UsageBasedStatus = {
-      isEnabled: !usageBasedStatusResponse.noUsageBasedAllowed,
+      isEnabled,
       limit: usageBasedStatusResponse.hardLimit,
     };
+
+    log.debug(`[DataService] Usage-based pricing status in fetchUsageBasedPricingData:`, {
+      rawResponse: usageBasedStatusResponse,
+      isEnabled,
+      limit: usageBasedStatusResponse.hardLimit,
+    });
 
     if (!status.isEnabled) {
       await this.cacheService.setCachedData(
@@ -243,17 +261,25 @@ export class DataService {
     return null;
   }
 
-  private async shouldFetchUsageBasedData(quotaPercentage: number): Promise<boolean> {
+  private async shouldFetchUsageBasedData(quotaPercentage: number, pricingStatus?: NewPricingStatus): Promise<boolean> {
+    // For new pricing users, always try to fetch usage-based data since they might have spending
+    if (pricingStatus?.pricingModelType === PricingModelType.NEW_RATE_LIMITED) {
+      log.debug("[DataService] New pricing user - always fetch usage-based data");
+      return true;
+    }
+
     if (quotaPercentage >= 95) {
       return true;
     }
 
     const cachedStatus = await this.cacheService.getCachedData<UsageBasedStatus>("pricing:status");
     if (cachedStatus?.isEnabled) {
+      log.debug("[DataService] Usage-based enabled in cache - fetching data");
       return true;
     }
 
     if (quotaPercentage < 80) {
+      log.debug("[DataService] Low quota percentage and no cached status - skipping usage-based fetch");
       return false;
     }
 
@@ -578,10 +604,21 @@ export class DataService {
     const response = await this.apiService.checkUsageBasedStatus(options.token);
 
     if (response) {
+      // API behavior:
+      // - When enabled: returns {"hardLimit": number}
+      // - When disabled: returns {"noUsageBasedAllowed": true}
+      const isEnabled = response.noUsageBasedAllowed !== true;
+
       const status: UsageBasedStatus = {
-        isEnabled: !response.noUsageBasedAllowed,
+        isEnabled,
         limit: response.hardLimit,
       };
+
+      log.debug(`[DataService] Usage-based status parsed:`, {
+        rawResponse: response,
+        isEnabled,
+        limit: response.hardLimit,
+      });
 
       await this.cacheService.setCachedData(cacheKey, status, CacheStrategy.TIME_BASED, 60 * 60 * 1000);
 
@@ -609,6 +646,85 @@ export class DataService {
     return periodInfo;
   }
 
+  private async determinePricingModel(options: DataFetchOptions): Promise<NewPricingStatus> {
+    const cacheKey = "pricing:model";
+
+    if (!options.forceRefresh && this.pricingStatusCache) {
+      return this.pricingStatusCache;
+    }
+
+    if (!options.forceRefresh) {
+      const cached = await this.cacheService.getCachedData<NewPricingStatus>(cacheKey);
+      if (cached) {
+        this.pricingStatusCache = cached;
+        return cached;
+      }
+    }
+
+    const apiResponse = await this.apiService.checkNewPricingStatus(options.token);
+
+    let pricingStatus: NewPricingStatus;
+    if (apiResponse && typeof apiResponse.isOnNewPricing === "boolean") {
+      pricingStatus = {
+        isOnNewPricing: apiResponse.isOnNewPricing,
+        pricingModelType: apiResponse.isOnNewPricing
+          ? PricingModelType.NEW_RATE_LIMITED
+          : PricingModelType.LEGACY_QUOTA,
+        hasOptedOut: !apiResponse.isOnNewPricing,
+      };
+
+      // Cache for 24 hours (pricing model doesn't change frequently)
+      await this.cacheService.setCachedData(
+        cacheKey,
+        pricingStatus,
+        CacheStrategy.TIME_BASED,
+        DataService.CACHE_TTL.PRICING_MODEL,
+      );
+      this.pricingStatusCache = pricingStatus;
+      return pricingStatus;
+    }
+
+    const fallbackStatus: NewPricingStatus = {
+      isOnNewPricing: false,
+      pricingModelType: PricingModelType.LEGACY_QUOTA,
+      hasOptedOut: false,
+    };
+
+    this.pricingStatusCache = fallbackStatus;
+    return fallbackStatus;
+  }
+
+  private async fetchPremiumQuotaOptional(options: DataFetchOptions): Promise<QuotaData | null> {
+    try {
+      return await this.fetchPremiumQuota(options);
+    } catch (error) {
+      log.debug("[DataService] Premium quota unavailable (normal for new pricing)", error);
+      return null;
+    }
+  }
+
+  private createCompatibilityQuota(): QuotaData {
+    // Create mock quota for new pricing users to maintain UI compatibility
+    // Use 0 limit to indicate unlimited/rate-limited
+    return {
+      current: 0,
+      limit: 0,
+      percentage: 0,
+      period: DateUtils.calculateCurrentMonthPeriod(),
+      lastUpdated: new Date(),
+    };
+  }
+
+  private createTrialQuota(): QuotaData {
+    return {
+      current: 0,
+      limit: 50,
+      percentage: 0,
+      period: DateUtils.calculateCurrentMonthPeriod(),
+      lastUpdated: new Date(),
+    };
+  }
+
   async getUsageBasedPeriod(forceRefresh: boolean = false): Promise<PeriodInfo> {
     const cacheKey = "period:billing";
 
@@ -629,44 +745,69 @@ export class DataService {
 
   async fetchAllUsageData(options: DataFetchOptions, analyticsTimePeriod: string = "1d"): Promise<UsageData | null> {
     try {
-      log.debug("[DataService] Starting fetch all usage data");
+      log.debug("[DataService] Starting fetch all usage data with pricing model detection");
       log.trace("[DataService] Fetch parameters:", {
         forceRefresh: options.forceRefresh,
         analyticsTimePeriod,
         currentContext: this.lastFetchContext,
       });
 
-      // Phase 1: Get premium quota data
-      const quota = await this.fetchPremiumQuota(options);
+      // Phase 1: Determine pricing model first
+      const pricingStatus = await this.determinePricingModel(options);
+      log.debug(`[DataService] Pricing model detected: ${pricingStatus.pricingModelType}`);
 
-      if (!quota) {
-        log.error("[DataService] Failed to fetch premium quota data");
-        return null;
+      // Phase 2: Conditional quota fetching based on pricing model
+      let quota: QuotaData | null = null;
+
+      switch (pricingStatus.pricingModelType) {
+        case PricingModelType.LEGACY_QUOTA:
+          // Legacy users: quota is essential
+          quota = await this.fetchPremiumQuota(options);
+          if (!quota) {
+            log.error("[DataService] Failed to fetch quota for legacy user");
+            return null;
+          }
+          log.debug("[DataService] Legacy quota fetched successfully");
+          break;
+
+        case PricingModelType.NEW_RATE_LIMITED:
+          // New pricing users: quota may be unavailable or meaningless
+          quota = await this.fetchPremiumQuotaOptional(options);
+          if (!quota) {
+            quota = this.createCompatibilityQuota();
+            log.debug("[DataService] Created compatibility quota for new pricing user");
+          } else {
+            log.debug("[DataService] Quota data available for new pricing user");
+          }
+          break;
+
+        case PricingModelType.TRIAL:
+          // Trial users: similar to new pricing
+          quota = (await this.fetchPremiumQuotaOptional(options)) || this.createTrialQuota();
+          log.debug("[DataService] Trial quota setup completed");
+          break;
       }
 
-      // Phase 2: Determine what additional data to fetch based on quota status
-      const shouldFetchUsageBased = await this.shouldFetchUsageBasedData(quota.percentage);
+      // Phase 3: Determine additional data to fetch
+      const shouldFetchUsageBased = await this.shouldFetchUsageBasedData(quota.percentage, pricingStatus);
       log.trace("[DataService] Fetch decisions:", {
+        pricingModel: pricingStatus.pricingModelType,
         shouldFetchUsageBased,
         quotaPercentage: quota.percentage,
       });
 
       const fetchPromises: Promise<any>[] = [];
-
-      // Conditionally fetch usage-based pricing data
       if (shouldFetchUsageBased) {
         fetchPromises.push(this.fetchUsageBasedPricingData(options));
       } else {
         fetchPromises.push(Promise.resolve(null));
       }
 
-      // User info fetching logic - respect cache TTL
       const isFullRefresh = options.forceRefresh;
 
       if (isFullRefresh) {
         fetchPromises.push(this.fetchUserInfo(options));
       } else {
-        // Let CacheService decide based on its TTL for user info
         const cachedUserInfo = await this.cacheService.getCachedData<AuthUserInfo>("user:info");
         if (cachedUserInfo) {
           const dbUserInfo = await this.fetchDbUserInfo(); // DB info is cheap
@@ -693,9 +834,17 @@ export class DataService {
 
       this.updateFetchContext(quota, usageBasedPricing?.status.isEnabled || false);
 
-      const result = { quota, stats, userInfo, usageEvents, analyticsData };
+      const result: UsageData = {
+        quota,
+        stats,
+        userInfo,
+        usageEvents,
+        analyticsData,
+        pricingStatus,
+      };
 
       log.trace("[DataService] Fetch all usage data completed:", {
+        pricingModel: pricingStatus.pricingModelType,
         quotaPercentage: quota.percentage,
         usageBasedEnabled: usageBasedPricing?.status.isEnabled || false,
         hasUserInfo: !!userInfo,
@@ -714,12 +863,14 @@ export class DataService {
   async clearAllCache(): Promise<void> {
     await this.cacheService.clearCache();
     this.lastFetchContext = null;
+    this.pricingStatusCache = null;
     log.debug("[DataService] All cached data cleared");
   }
 
   async clearAllCacheIncludingPermanent(): Promise<void> {
     await this.cacheService.clearCache();
     this.lastFetchContext = null;
+    this.pricingStatusCache = null;
     log.debug("[DataService] All cached data cleared including permanent");
   }
 
@@ -773,7 +924,7 @@ export class DataService {
       log.debug("[DataService] Invalidating usage-based caches after limit change");
       await this.cacheService.removeCachedData("pricing:status");
       await this.cacheService.removeCachedData("pricing:data");
-      this.lastFetchContext = null; // Reset context to force fresh fetch
+      this.lastFetchContext = null;
     }
     return success;
   }
@@ -784,7 +935,7 @@ export class DataService {
       log.debug("[DataService] Invalidating usage-based caches after enabling");
       await this.cacheService.removeCachedData("pricing:status");
       await this.cacheService.removeCachedData("pricing:data");
-      this.lastFetchContext = null; // Reset context to force fresh fetch
+      this.lastFetchContext = null;
     }
     return success;
   }
@@ -795,7 +946,7 @@ export class DataService {
       log.debug("[DataService] Invalidating usage-based caches after disabling");
       await this.cacheService.removeCachedData("pricing:status");
       await this.cacheService.removeCachedData("pricing:data");
-      this.lastFetchContext = null; // Reset context to force fresh fetch
+      this.lastFetchContext = null;
     }
     return success;
   }
@@ -804,6 +955,7 @@ export class DataService {
     const cacheKeys = [
       "quota:premium",
       "pricing:data",
+      "pricing:status",
       "user:info",
       "events:7d:100",
       "analytics:1d",

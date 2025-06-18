@@ -4,6 +4,7 @@ import { DataService } from "./services/dataService";
 import { CacheService } from "./services/cacheService";
 import { StatusBarProvider } from "./ui/statusBar";
 import { initializeLogger, log, showOutputChannel } from "./utils/logger";
+import { PricingModelType, NewPricingStatus } from "./types";
 
 let statusBarProvider: StatusBarProvider;
 let updateTimer: NodeJS.Timeout | undefined;
@@ -306,7 +307,7 @@ export async function activate(context: vscode.ExtensionContext) {
       actions.push("Enable Usage-Based Pricing");
     }
 
-    actions.push("View Details", "Debug Cache Status");
+    actions.push("View Details", "Debug Cache Status", "Clear Usage Cache");
 
     const selection = await vscode.window.showQuickPick(actions, {
       placeHolder: "Choose an action",
@@ -347,6 +348,22 @@ export async function activate(context: vscode.ExtensionContext) {
         // TODO: Implement details view in future iteration
         vscode.window.showInformationMessage("Detailed view coming soon!");
         break;
+      case "Debug Cache Status":
+        vscode.commands.executeCommand("cursorPulse.debugCache");
+        break;
+      case "Clear Usage Cache":
+        log.info("Clearing usage-based pricing caches");
+        await dataService.clearAllCache();
+        const cacheService = CacheService.getInstance();
+        await cacheService.removeCachedData("pricing:status");
+        await cacheService.removeCachedData("pricing:data");
+        vscode.window.showInformationMessage(
+          `🧹 Usage Cache Cleared\n\n` +
+            `✅ Pricing status and data caches cleared\n\n` +
+            `📊 Fresh data will be loaded on next refresh`,
+        );
+        await refresh(true);
+        break;
     }
   });
 
@@ -385,6 +402,10 @@ export async function activate(context: vscode.ExtensionContext) {
     }
     if (e.affectsConfiguration("cursorPulse.maxUsageEvents")) {
       log.debug("Max usage events setting changed");
+    }
+    if (e.affectsConfiguration("cursorPulse.forceLegacyDisplayMode")) {
+      log.info("Force legacy display mode setting changed, refreshing display...");
+      await refresh(false); // Refresh to apply new display mode
     }
   });
 
@@ -459,6 +480,9 @@ export async function activate(context: vscode.ExtensionContext) {
         return;
       }
 
+      // Check for pricing model migrations before updating status bar
+      await handlePricingModelMigration(usageData.pricingStatus);
+
       await statusBarProvider.updateUsageData(usageData);
 
       if (forceRefresh) {
@@ -472,10 +496,14 @@ export async function activate(context: vscode.ExtensionContext) {
           const totalCost =
             usageData.stats.usageBasedPricing.currentMonth.totalCost +
             usageData.stats.usageBasedPricing.lastMonth.totalCost;
-          const limit = usageData.stats.usageBasedPricing.status.limit || 0;
-          const costPercentage = limit > 0 ? Math.round((totalCost / limit) * 100) : 0;
-          const limitDisplay = limit === 0 ? "∞" : limit.toString();
-          messageParts.push(`💳 Usage-Based: $${totalCost.toFixed(2)}/${limitDisplay} (${costPercentage}%)`);
+
+          // Only show usage-based info if there's actual spending
+          if (totalCost > 0) {
+            const limit = usageData.stats.usageBasedPricing.status.limit || 0;
+            const costPercentage = limit > 0 ? Math.round((totalCost / limit) * 100) : 0;
+            const limitDisplay = limit === 0 ? "∞" : limit.toString();
+            messageParts.push(`💳 Usage-Based: $${totalCost.toFixed(2)}/${limitDisplay} (${costPercentage}%)`);
+          }
         }
 
         if (usageData.analyticsData) {
@@ -514,6 +542,58 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     } finally {
       isUpdating = false;
+    }
+  }
+
+  /**
+   * Handle pricing model migration notifications when user's pricing model changes
+   */
+  async function handlePricingModelMigration(pricingStatus?: NewPricingStatus): Promise<void> {
+    if (!pricingStatus) {
+      return;
+    }
+
+    try {
+      const config = vscode.workspace.getConfiguration("cursorPulse");
+      const lastKnownPricingModel = config.get<string>("internal.lastKnownPricingModel");
+      const currentModel = pricingStatus.pricingModelType;
+
+      // Skip notification on first run (when lastKnownPricingModel is undefined)
+      if (lastKnownPricingModel && lastKnownPricingModel !== currentModel) {
+        // User's pricing model changed - show migration notice
+        let message = "";
+        let isUpgrade = false;
+
+        if (
+          currentModel === PricingModelType.NEW_RATE_LIMITED &&
+          lastKnownPricingModel === PricingModelType.LEGACY_QUOTA
+        ) {
+          message = "🎉 Your Cursor plan now has unlimited requests with rate limits! Enjoy the enhanced experience.";
+          isUpgrade = true;
+        } else if (
+          currentModel === PricingModelType.LEGACY_QUOTA &&
+          lastKnownPricingModel === PricingModelType.NEW_RATE_LIMITED
+        ) {
+          message = "ℹ️ Your Cursor plan is now using the traditional 500 request quota system.";
+        } else if (currentModel === PricingModelType.TRIAL) {
+          message = "ℹ️ You are now on a Cursor trial plan with limited requests.";
+        } else {
+          message = `ℹ️ Your Cursor pricing model has changed to: ${currentModel}`;
+        }
+
+        // Show the notification
+        if (isUpgrade) {
+          vscode.window.showInformationMessage(message);
+        } else {
+          vscode.window.showWarningMessage(message);
+        }
+
+        log.info(`Pricing model migration detected: ${lastKnownPricingModel} → ${currentModel}`);
+      }
+
+      await config.update("internal.lastKnownPricingModel", currentModel, vscode.ConfigurationTarget.Global);
+    } catch (error) {
+      log.warn("Failed to handle pricing model migration", error);
     }
   }
 

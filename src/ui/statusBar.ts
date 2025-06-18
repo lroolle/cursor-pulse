@@ -1,5 +1,16 @@
 import * as vscode from "vscode";
-import { QuotaData, ApiError, CursorStats, UserInfo, FilteredUsageResponse, UsageEvent, AnalyticsData } from "../types";
+import {
+  QuotaData,
+  ApiError,
+  CursorStats,
+  UserInfo,
+  FilteredUsageResponse,
+  UsageEvent,
+  AnalyticsData,
+  NewPricingStatus,
+  PricingModelType,
+  UsageData,
+} from "../types";
 import { log } from "../utils/logger";
 import { DataService } from "../services/dataService";
 import { PeriodInfo } from "../types";
@@ -62,7 +73,49 @@ export class StatusBarProvider {
     this.statusBarItem.show();
   }
 
-  async updateUsageData(data: {
+  async updateUsageData(data: UsageData): Promise<void> {
+    const { quota, stats, userInfo, usageEvents, analyticsData, pricingStatus } = data;
+
+    if (!pricingStatus) {
+      log.warn("[StatusBar] No pricing status provided, falling back to legacy display");
+      return this.updateUsageDataLegacy({ quota, stats, userInfo, usageEvents, analyticsData });
+    }
+
+    const config = vscode.workspace.getConfiguration("cursorPulse");
+    const forceLegacyMode = config.get<boolean>("forceLegacyDisplayMode", false);
+
+    if (forceLegacyMode) {
+      log.debug("[StatusBar] Using forced legacy display mode");
+      return this.updateUsageDataLegacy({ quota, stats, userInfo, usageEvents, analyticsData });
+    }
+
+    log.debug(`[StatusBar] Updating display for pricing model: ${pricingStatus.pricingModelType}`);
+
+    const quotaIncreased = quota.current > this.previousQuota;
+    const oldQuota = this.previousQuota;
+    this.previousQuota = quota.current;
+
+    switch (pricingStatus.pricingModelType) {
+      case PricingModelType.LEGACY_QUOTA:
+        await this.displayLegacyQuotaStatus(quota, stats, userInfo, quotaIncreased, oldQuota);
+        break;
+
+      case PricingModelType.NEW_RATE_LIMITED:
+        await this.displayNewPricingStatus(quota, stats, userInfo, pricingStatus, analyticsData, usageEvents);
+        break;
+
+      case PricingModelType.TRIAL:
+        this.displayTrialStatus(quota, stats, userInfo, quotaIncreased, oldQuota);
+        break;
+    }
+
+    const usageBasedPeriod = await this.dataService.getUsageBasedPeriod();
+    this.statusBarItem.tooltip = this.createUsageDataTooltip(data, usageBasedPeriod, pricingStatus);
+    this.statusBarItem.backgroundColor = undefined;
+    this.statusBarItem.show();
+  }
+
+  private async updateUsageDataLegacy(data: {
     quota: QuotaData;
     stats: CursorStats;
     userInfo: UserInfo | null;
@@ -119,7 +172,11 @@ export class StatusBarProvider {
     }
 
     const usageBasedPeriod = await this.dataService.getUsageBasedPeriod();
-    this.statusBarItem.tooltip = this.createUsageDataTooltip(data, usageBasedPeriod);
+    this.statusBarItem.tooltip = this.createUsageDataTooltip(
+      { quota, stats, userInfo, usageEvents, analyticsData },
+      usageBasedPeriod,
+      undefined, // No pricing status for legacy fallback
+    );
     this.statusBarItem.backgroundColor = undefined;
     this.statusBarItem.show();
   }
@@ -179,6 +236,7 @@ export class StatusBarProvider {
       analyticsData: AnalyticsData | null;
     },
     usageBasedPeriod: PeriodInfo,
+    pricingStatus?: NewPricingStatus,
   ): vscode.MarkdownString {
     const { quota, stats, userInfo, usageEvents, analyticsData } = data;
     const tooltip = new vscode.MarkdownString();
@@ -241,81 +299,122 @@ export class StatusBarProvider {
         );
       }
     }
-    tooltip.appendMarkdown(
-      `<div style="padding:10px"><b>$(zap) Premium Fast Request</b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>${quota.current}/${quota.limit} (${quota.percentage}%)</strong><br/>&nbsp;&nbsp;&nbsp;&nbsp;<small style="font-size:10px;opacity:0.8;line-height:0.9;"><i>Reset in <strong>${quota.period.remaining} days</strong> (${quota.period.start} to ${quota.period.end})</i></small><br/>&nbsp;&nbsp;&nbsp;&nbsp;${this.createProgressBar(quota.percentage)}</div>\n\n`,
-    );
+
+    log.debug(`[StatusBar] Tooltip display decisions:`, {
+      pricingModelType: pricingStatus?.pricingModelType,
+      hasUsageBasedPricing: !!stats.usageBasedPricing,
+      isUsageBasedEnabled: stats.usageBasedPricing?.status?.isEnabled,
+      quotaCurrent: quota.current,
+      quotaLimit: quota.limit,
+      quotaPercentage: quota.percentage,
+    });
+
+    const shouldShowQuotaSection = this.shouldShowQuotaSection(pricingStatus, quota);
+
+    log.debug(`[StatusBar] Should show quota section: ${shouldShowQuotaSection}`);
+
+    if (shouldShowQuotaSection) {
+      log.debug(`[StatusBar] Showing quota section`);
+      tooltip.appendMarkdown(
+        `<div style="padding:10px"><b>$(zap) Premium Fast Request</b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>${quota.current}/${quota.limit} (${quota.percentage}%)</strong><br/>&nbsp;&nbsp;&nbsp;&nbsp;<small style="font-size:10px;opacity:0.8;line-height:0.9;"><i>Reset in <strong>${quota.period.remaining} days</strong> (${quota.period.start} to ${quota.period.end})</i></small><br/>&nbsp;&nbsp;&nbsp;&nbsp;${this.createProgressBar(quota.percentage)}</div>\n\n`,
+      );
+    } else if (pricingStatus?.pricingModelType === PricingModelType.NEW_RATE_LIMITED) {
+      // Show unlimited status section for new pricing users
+      log.debug(`[StatusBar] Showing unlimited requests section for new pricing`);
+      tooltip.appendMarkdown(
+        `<div style="padding:10px"><b>$(infinity) Unlimited Requests</b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>Rate Limited</strong><br/>&nbsp;&nbsp;&nbsp;&nbsp;<small style="font-size:10px;opacity:0.8;line-height:0.9;">$(info) Rate limited based on your plan</small></div>\n\n`,
+      );
+    }
 
     if (stats.usageBasedPricing?.status.isEnabled) {
       const totalCost = stats.usageBasedPricing.currentMonth.totalCost + stats.usageBasedPricing.lastMonth.totalCost;
-      const limit = stats.usageBasedPricing.status.limit || 0;
-      const spendPercentage = limit > 0 ? Math.round((totalCost / limit) * 100) : 0;
 
-      tooltip.appendMarkdown(
-        `<div><b>$(credit-card) Usage-Based Spend</b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>$${totalCost.toFixed(2)}/${limit === 0 ? "N/A" : limit} (${spendPercentage}%)</strong><br/>&nbsp;&nbsp;&nbsp;&nbsp;<small style="font-size:10px;opacity:0.8;line-height:0.9;"><i>Reset in <strong>${usageBasedPeriod.remaining} days</strong> (${usageBasedPeriod.start} to ${usageBasedPeriod.end})</i></small><br/>&nbsp;&nbsp;&nbsp;&nbsp;${this.createProgressBar(spendPercentage)}</div>\n\n`,
-      );
+      log.debug(`[StatusBar] Usage-based pricing debug:`, {
+        isEnabled: stats.usageBasedPricing.status.isEnabled,
+        currentMonthCost: stats.usageBasedPricing.currentMonth.totalCost,
+        lastMonthCost: stats.usageBasedPricing.lastMonth.totalCost,
+        totalCost,
+        currentMonthItems: stats.usageBasedPricing.currentMonth.items?.length || 0,
+        lastMonthItems: stats.usageBasedPricing.lastMonth.items?.length || 0,
+      });
 
-      const recentItems = [
-        ...stats.usageBasedPricing.currentMonth.items,
-        ...stats.usageBasedPricing.lastMonth.items,
-      ].slice(0, 10);
+      if (totalCost > 0) {
+        const limit = stats.usageBasedPricing.status.limit || 0;
+        const spendPercentage = limit > 0 ? Math.round((totalCost / limit) * 100) : 0;
 
-      if (recentItems.length > 0) {
-        const config = vscode.workspace.getConfiguration("cursorPulse");
-        const showChargesCollapsed = config.get<boolean>("showChargesCollapsed", true);
+        tooltip.appendMarkdown(
+          `<div><b>$(credit-card) Usage-Based Spend</b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>$${totalCost.toFixed(2)}/${limit === 0 ? "N/A" : limit} (${spendPercentage}%)</strong><br/>&nbsp;&nbsp;&nbsp;&nbsp;<small style="font-size:10px;opacity:0.8;line-height:0.9;"><i>Reset in <strong>${usageBasedPeriod.remaining} days</strong> (${usageBasedPeriod.start} to ${usageBasedPeriod.end})</i></small><br/>&nbsp;&nbsp;&nbsp;&nbsp;${this.createProgressBar(spendPercentage)}</div>\n\n`,
+        );
 
-        if (showChargesCollapsed && recentItems.length > 1) {
-          tooltip.appendMarkdown(
-            `<details><summary>&nbsp;&nbsp;$(list-unordered) Usage-Based Charges (${recentItems.length} items)</summary>\n\n`,
-          );
+        const recentItems = [
+          ...stats.usageBasedPricing.currentMonth.items,
+          ...stats.usageBasedPricing.lastMonth.items,
+        ].slice(0, 10);
 
-          tooltip.appendMarkdown(
-            `<div style="font-family:monospace;font-size:9px;line-height:1.0;padding:3px;border:1px solid #444;background-color:#2d2d30;border-radius:3px;margin-top:5px;">\n`,
-          );
+        if (recentItems.length > 0) {
+          const config = vscode.workspace.getConfiguration("cursorPulse");
+          const showChargesCollapsed = config.get<boolean>("showChargesCollapsed", true);
 
-          for (const item of recentItems) {
-            const trimmedDescription = this.trimDescription(item.description, 35);
-            const fullDescription = this.escapeHtmlAttribute(item.description);
+          if (showChargesCollapsed && recentItems.length > 1) {
             tooltip.appendMarkdown(
-              `&nbsp;&nbsp;&nbsp;&nbsp;<small style="font-size:9px;"><b>$${item.totalCost.toFixed(2)}</b> <code title="${fullDescription}">${trimmedDescription}</code></small><br/>\n`,
+              `<details><summary>&nbsp;&nbsp;$(list-unordered) Usage-Based Charges (${recentItems.length} items)</summary>\n\n`,
             );
-          }
 
-          tooltip.appendMarkdown(`</div>\n`);
-          tooltip.appendMarkdown(`</details>\n\n`);
-        } else {
-          tooltip.appendMarkdown(`$(list-unordered) **Usage-Based Charges**\n\n`);
-
-          tooltip.appendMarkdown(
-            `<div style="font-family:monospace;font-size:9px;line-height:1.0;padding:3px;border:1px solid #444;background-color:#2d2d30;border-radius:3px;">\n`,
-          );
-
-          const displayItems = recentItems.slice(0, 3);
-          for (const item of displayItems) {
-            const trimmedDescription = this.trimDescription(item.description, 35);
-            const fullDescription = this.escapeHtmlAttribute(item.description);
             tooltip.appendMarkdown(
-              `&nbsp;&nbsp;&nbsp;&nbsp;<small style="font-size:9px;"><b>$${item.totalCost.toFixed(2)}</b> <code title="${fullDescription}">${trimmedDescription}</code></small><br/>\n`,
+              `<div style="font-family:monospace;font-size:9px;line-height:1.0;padding:3px;border:1px solid #444;background-color:#2d2d30;border-radius:3px;margin-top:5px;">\n`,
             );
-          }
 
-          if (recentItems.length > 3) {
+            for (const item of recentItems) {
+              const trimmedDescription = this.trimDescription(item.description, 35);
+              const fullDescription = this.escapeHtmlAttribute(item.description);
+              tooltip.appendMarkdown(
+                `&nbsp;&nbsp;&nbsp;&nbsp;<small style="font-size:9px;"><b>$${item.totalCost.toFixed(2)}</b> <code title="${fullDescription}">${trimmedDescription}</code></small><br/>\n`,
+              );
+            }
+
+            tooltip.appendMarkdown(`</div>\n`);
+            tooltip.appendMarkdown(`</details>\n\n`);
+          } else {
+            tooltip.appendMarkdown(`$(list-unordered) **Usage-Based Charges**\n\n`);
+
             tooltip.appendMarkdown(
-              `&nbsp;&nbsp;&nbsp;&nbsp;<small style="font-size:9px;color:#888;">... and ${recentItems.length - 3} more charges</small><br/>\n`,
+              `<div style="font-family:monospace;font-size:9px;line-height:1.0;padding:3px;border:1px solid #444;background-color:#2d2d30;border-radius:3px;">\n`,
             );
-          }
 
-          tooltip.appendMarkdown(`</div>\n\n`);
+            const displayItems = recentItems.slice(0, 3);
+            for (const item of displayItems) {
+              const trimmedDescription = this.trimDescription(item.description, 35);
+              const fullDescription = this.escapeHtmlAttribute(item.description);
+              tooltip.appendMarkdown(
+                `&nbsp;&nbsp;&nbsp;&nbsp;<small style="font-size:9px;"><b>$${item.totalCost.toFixed(2)}</b> <code title="${fullDescription}">${trimmedDescription}</code></small><br/>\n`,
+              );
+            }
+
+            if (recentItems.length > 3) {
+              tooltip.appendMarkdown(
+                `&nbsp;&nbsp;&nbsp;&nbsp;<small style="font-size:9px;color:#888;">... and ${recentItems.length - 3} more charges</small><br/>\n`,
+              );
+            }
+
+            tooltip.appendMarkdown(`</div>\n\n`);
+          }
         }
+      } else {
+        log.debug(`[StatusBar] Usage-based pricing enabled but no spending (totalCost: ${totalCost})`);
       }
     } else if (stats.usageBasedPricing?.status) {
+      log.debug(`[StatusBar] Usage-based pricing status:`, {
+        statusExists: !!stats.usageBasedPricing?.status,
+        isEnabled: stats.usageBasedPricing?.status?.isEnabled,
+      });
       tooltip.appendMarkdown(`$(lock) **Usage-Based Pricing:** $(x) Disabled\n\n`);
       tooltip.appendMarkdown(`&nbsp;&nbsp;&nbsp;&nbsp;$(info) Only slow requests when quota exceeded\n\n`);
+    } else {
+      log.debug(`[StatusBar] No usage-based pricing data found`);
     }
 
     if (usageEvents && usageEvents.usageEvents.length > 0) {
-      const relevantEvents = usageEvents.usageEvents.filter(
-        (event) => event.priceCents > 0 || event.status === "errored",
-      );
+      const relevantEvents = this.filterRelevantEvents(usageEvents.usageEvents, pricingStatus);
 
       if (relevantEvents.length > 0) {
         const config = vscode.workspace.getConfiguration("cursorPulse");
@@ -380,6 +479,7 @@ export class StatusBarProvider {
 
     if (stats.usageBasedPricing?.status.isEnabled) {
       actions.push(`$(settings-gear) [Set Limit](command:cursorPulse.setUsageLimit)`);
+      actions.push(`$(credit-card) [Disable](command:cursorPulse.disableUsageBased)`);
     } else if (stats.usageBasedPricing?.status) {
       actions.push(`$(unlock) [Enable Usage-Based](command:cursorPulse.enableUsageBased)`);
     }
@@ -547,6 +647,9 @@ export class StatusBarProvider {
     } else if ((event.details as any).chat) {
       model = (event.details as any).chat.modelIntent;
       isMaxMode = (event.details as any).chat.maxMode;
+    } else if ((event.details as any).contextChat) {
+      model = (event.details as any).contextChat.modelIntent;
+      isMaxMode = (event.details as any).contextChat.maxMode;
     }
 
     return { model, isMaxMode, isUsageBased, includedInPro, isSlow };
@@ -913,6 +1016,230 @@ export class StatusBarProvider {
       log.error("Error displaying premium status", error);
       this.statusBarItem.text = `$(zap) ${quota.current}/${quota.limit}`;
       this.statusBarItem.color = this.getStatusColor(quota.percentage);
+    }
+  }
+
+  private async displayLegacyQuotaStatus(
+    quota: QuotaData,
+    stats: CursorStats,
+    userInfo: UserInfo | null,
+    quotaIncreased: boolean,
+    oldQuota: number,
+  ): Promise<void> {
+    const config = vscode.workspace.getConfiguration("cursorPulse");
+    const showPercentage = config.get<boolean>("showPercentage", true);
+
+    const shouldShowUsageBased = this.shouldFlipToUsageBasedDisplay(quota, stats);
+
+    if (shouldShowUsageBased) {
+      try {
+        const totalCost =
+          stats.usageBasedPricing!.currentMonth.totalCost + stats.usageBasedPricing!.lastMonth.totalCost;
+        const limit = stats.usageBasedPricing!.status.limit || 0;
+        const spendPercentage = limit > 0 ? Math.round((totalCost / limit) * 100) : 0;
+
+        const spendIncreased = totalCost > this.previousUsageBasedSpend;
+        const oldSpend = this.previousUsageBasedSpend;
+        this.previousUsageBasedSpend = totalCost;
+
+        const limitDisplay = limit === 0 ? "∞" : limit.toString();
+        const percentageText = showPercentage ? ` (${spendPercentage}%)` : "";
+        const normalText = `$(credit-card) $${totalCost.toFixed(2)}/${limitDisplay}${percentageText}`;
+        this.statusBarItem.text = normalText;
+        this.originalText = normalText;
+
+        if (spendIncreased) {
+          this.animateUsageBasedIncreaseWithOldValue(
+            spendPercentage,
+            totalCost,
+            limit,
+            showPercentage,
+            oldSpend,
+            totalCost,
+          );
+        } else {
+          this.statusBarItem.color = this.getUsageColor(spendPercentage);
+        }
+      } catch (error) {
+        log.warn("Failed to display usage-based status for legacy user, falling back to premium display", error);
+        this.displayPremiumStatusWithOldValue(quota, showPercentage, quotaIncreased, oldQuota);
+      }
+    } else {
+      this.previousUsageBasedSpend = 0;
+      this.displayPremiumStatusWithOldValue(quota, showPercentage, quotaIncreased, oldQuota);
+    }
+  }
+
+  private async displayNewPricingStatus(
+    quota: QuotaData,
+    stats: CursorStats,
+    userInfo: UserInfo | null,
+    pricingStatus: NewPricingStatus,
+    analyticsData?: AnalyticsData | null,
+    usageEvents?: FilteredUsageResponse | null,
+  ): Promise<void> {
+    const config = vscode.workspace.getConfiguration("cursorPulse");
+    const showPercentage = config.get<boolean>("showPercentage", true);
+
+    const hasUsageBasedSpending =
+      stats.usageBasedPricing?.status.isEnabled && this.calculateTotalUsageBasedSpending(stats) > 0;
+
+    if (hasUsageBasedSpending) {
+      try {
+        const totalCost =
+          stats.usageBasedPricing!.currentMonth.totalCost + stats.usageBasedPricing!.lastMonth.totalCost;
+        const limit = stats.usageBasedPricing!.status.limit || 0;
+        const spendPercentage = limit > 0 ? Math.round((totalCost / limit) * 100) : 0;
+
+        const spendIncreased = totalCost > this.previousUsageBasedSpend;
+        const oldSpend = this.previousUsageBasedSpend;
+        this.previousUsageBasedSpend = totalCost;
+
+        const limitDisplay = limit === 0 ? "∞" : limit.toString();
+        const percentageText = showPercentage ? ` (${spendPercentage}%)` : "";
+        const normalText = `$(credit-card) $${totalCost.toFixed(2)}/${limitDisplay}${percentageText}`;
+        this.statusBarItem.text = normalText;
+        this.originalText = normalText;
+
+        if (spendIncreased) {
+          this.animateUsageBasedIncreaseWithOldValue(
+            spendPercentage,
+            totalCost,
+            limit,
+            showPercentage,
+            oldSpend,
+            totalCost,
+          );
+        } else {
+          this.statusBarItem.color = this.getUsageColor(spendPercentage);
+        }
+      } catch (error) {
+        log.warn("Failed to display usage-based status for new pricing user", error);
+        this.displayUnlimitedStatus(pricingStatus, analyticsData, usageEvents);
+      }
+    } else {
+      this.displayUnlimitedStatus(pricingStatus, analyticsData, usageEvents);
+    }
+  }
+
+  private displayUnlimitedStatus(
+    pricingStatus: NewPricingStatus,
+    analyticsData?: AnalyticsData | null,
+    usageEvents?: FilteredUsageResponse | null,
+  ): void {
+    // Get request count from analytics data or fallback to usage events
+    // TODO: unified analytics data from usage events?
+    let requestCount = 0;
+
+    if (analyticsData && analyticsData.totalRequests > 0) {
+      requestCount = analyticsData.totalRequests;
+    } else if (usageEvents && usageEvents.usageEvents.length > 0) {
+      requestCount = this.calculateRequestsFromUsageEvents(usageEvents.usageEvents);
+    }
+
+    const statusText = `$(infinity) ${requestCount.toLocaleString()}`;
+
+    this.statusBarItem.text = statusText;
+    this.statusBarItem.color = "#74c0fc";
+    this.originalText = statusText;
+  }
+
+  private calculateRequestsFromUsageEvents(events: UsageEvent[]): number {
+    // FIXME: this could be inaccurate
+    let totalRequests = 0;
+
+    for (const event of events) {
+      if (event.priceCents > 0) {
+        const estimatedRequests = Math.max(1, Math.round(event.priceCents / 4));
+        totalRequests += estimatedRequests;
+      } else {
+        totalRequests += 1;
+      }
+    }
+
+    return totalRequests;
+  }
+
+  private displayTrialStatus(
+    quota: QuotaData,
+    stats: CursorStats,
+    userInfo: UserInfo | null,
+    quotaIncreased: boolean,
+    oldQuota: number,
+  ): void {
+    const config = vscode.workspace.getConfiguration("cursorPulse");
+    const showPercentage = config.get<boolean>("showPercentage", true);
+
+    const percentageText = showPercentage ? ` (${quota.percentage}%)` : "";
+    const statusText = `⏳ Trial ${quota.current}/${quota.limit}${percentageText}`;
+
+    this.statusBarItem.text = statusText;
+    this.statusBarItem.color = "#ffd93d"; // Yellow for trial
+    this.originalText = statusText;
+
+    if (quotaIncreased) {
+      this.animateQuotaIncreaseWithOldValue(quota.percentage, quota.current, quota.limit, showPercentage, oldQuota);
+    }
+  }
+
+  private calculateTotalUsageBasedSpending(stats: CursorStats): number {
+    if (!stats.usageBasedPricing) {
+      return 0;
+    }
+    return stats.usageBasedPricing.currentMonth.totalCost + stats.usageBasedPricing.lastMonth.totalCost;
+  }
+
+  private filterRelevantEvents(events: UsageEvent[], pricingStatus?: NewPricingStatus): UsageEvent[] {
+    if (!pricingStatus) {
+      return events.filter((event) => event.priceCents > 0 || event.status === "errored");
+    }
+
+    switch (pricingStatus.pricingModelType) {
+      case PricingModelType.NEW_RATE_LIMITED:
+      case PricingModelType.TRIAL:
+        // For new pricing: priceCents=0 is normal, show all interesting events
+        return events.filter(
+          (event) => event.status === "errored" || event.priceCents > 0 || this.isInterestingEvent(event),
+        );
+
+      case PricingModelType.LEGACY_QUOTA:
+      default:
+        // For legacy: only show paid events or errors (existing logic)
+        return events.filter((event) => event.priceCents > 0 || event.status === "errored");
+    }
+  }
+
+  private isInterestingEvent(event: UsageEvent): boolean {
+    const details = event.details;
+    return !!(
+      details.composer?.maxMode ||
+      details.chat?.maxMode ||
+      details.toolCallComposer?.maxMode ||
+      event.status === "errored" ||
+      event.isSlow
+    );
+  }
+
+  private shouldShowQuotaSection(pricingStatus?: NewPricingStatus, quota?: QuotaData): boolean {
+    const config = vscode.workspace.getConfiguration("cursorPulse");
+    const forceLegacyMode = config.get<boolean>("forceLegacyDisplayMode", false);
+
+    if (forceLegacyMode) {
+      return true;
+    }
+
+    if (!pricingStatus) {
+      return true;
+    }
+
+    switch (pricingStatus.pricingModelType) {
+      case PricingModelType.LEGACY_QUOTA:
+      case PricingModelType.TRIAL:
+        return true;
+      case PricingModelType.NEW_RATE_LIMITED:
+        return false;
+      default:
+        return true;
     }
   }
 

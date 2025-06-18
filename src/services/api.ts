@@ -1,4 +1,4 @@
-import { ApiError } from "../types";
+import { ApiError, NewPricingStatus, PricingModelType } from "../types";
 import { log } from "../utils/logger";
 
 export class ApiService {
@@ -183,7 +183,7 @@ export class ApiService {
       const response = await this.makeRequest("/dashboard/set-hard-limit", {
         method: "POST",
         headers: this.getAuthHeaders(token),
-        body: { noUsageBasedAllowed: true },
+        body: { hardLimit: 0, noUsageBasedAllowed: true, hardLimitPerUser: 0 },
       });
 
       if (response) {
@@ -194,6 +194,30 @@ export class ApiService {
     } catch (err) {
       log.error("[API] Failed to disable usage-based pricing", err);
       return false;
+    }
+  }
+
+  async checkNewPricingStatus(token: string): Promise<{ isOnNewPricing: boolean } | null> {
+    try {
+      log.debug("[API] Checking new pricing model status");
+
+      const response = await this.makeRequest("/dashboard/is-on-new-pricing", {
+        method: "POST",
+        headers: this.getAuthHeaders(token),
+        body: {},
+      });
+
+      if (response && typeof response.isOnNewPricing === "boolean") {
+        log.debug(`[API] Pricing model status: ${response.isOnNewPricing ? "new unlimited" : "legacy quota"}`);
+        return response;
+      }
+
+      log.warn("[API] Invalid response format for pricing status");
+      return null;
+    } catch (err) {
+      log.warn("[API] Failed to check new pricing status, assuming legacy model", err);
+      // TODO: move to dataService
+      return { isOnNewPricing: false };
     }
   }
 

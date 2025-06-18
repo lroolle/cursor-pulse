@@ -136,10 +136,9 @@ export interface UserInfo {
   id: string;
   email: string;
   name: string;
-  membershipType?: string; // "free", "pro", "team"
+  membershipType?: string; // "free", "pro", "team", "ultra"
 }
 
-// Auth/me API response interface
 export interface AuthUserInfo {
   email: string;
   email_verified: boolean;
@@ -149,7 +148,6 @@ export interface AuthUserInfo {
   picture: string | null;
 }
 
-// User analytics interfaces
 export interface ModelUsage {
   name: string;
   count: number;
@@ -209,10 +207,10 @@ export interface AnalyticsData {
 // Cache metadata interface
 export interface CacheMetadata {
   timestamp: number;
-  ttl: number; // Time to live in milliseconds
-  stateVersion: number; // Cursor state DB version when cached
+  ttl: number;
+  stateVersion: number;
   strategy: "state_based" | "time_based" | "permanent" | "param_based";
-  params?: string; // For param-based caching
+  params?: string;
 }
 
 // Cached data wrapper
@@ -233,4 +231,35 @@ export interface PeriodInfo {
   start: string;
   end: string;
   remaining: number;
+}
+
+// New pricing model types
+export enum PricingModelType {
+  LEGACY_QUOTA = "legacy_quota",
+  NEW_RATE_LIMITED = "new_rate_limited",
+  TRIAL = "trial",
+}
+
+export interface NewPricingStatus {
+  isOnNewPricing: boolean;
+  pricingModelType: PricingModelType;
+  hasOptedOut?: boolean;
+}
+
+export interface EnhancedQuotaData extends QuotaData {
+  isLegacyQuota: boolean;
+  rateLimitStatus?: {
+    isBurstBucketEmpty: boolean;
+    isLocalBucketEmpty: boolean;
+    estimatedRefillTime?: string;
+  };
+}
+
+export interface UsageData {
+  quota: QuotaData;
+  stats: CursorStats;
+  userInfo: UserInfo | null;
+  usageEvents: FilteredUsageResponse | null;
+  analyticsData: AnalyticsData | null;
+  pricingStatus?: NewPricingStatus; // Include pricing context
 }

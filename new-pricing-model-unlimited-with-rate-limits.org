@@ -1,0 +1,135 @@
+#+TITLE: New Unlimited With Rate Limits Pricing Model
+#+DATE: 2025-06-19 00:06
+#+STARTUP: overview
+#+AUTHOR: Eric Wang
+#+FILETAGS: :unlimited-with-rate-limits-pricing:..:
+#+OPTIONS: ^:{} _:{}
+
+* New Unlimited With Rate Limits Pricing Model
+
+** Introduction
+
+Cursor's new Ultra plan and the *"unlimited-with-rate-limits"* model rolled out on 17–18 June 2025.
+
+** Official Information
+
+*** Ultra Plan Launch (17 June 2025)
+- $200/month plan with "20x more usage than Pro" with unlimited requests, much higher rate limits.
+- Pro keeps $20 price but moves to unlimited-with-rate-limits scheme
+- Legacy 500-fast-request users can opt out in ~Cursor Dashboard~ > ~Advanced Settings~
+- See: [[#ref1][Cursor Ultra announcement]]
+
+*** Rate-Limits Documentation (updated 18 June 2025)
+- Two buckets per user: *burst* (for spiky activity, slow to refill) and *local* (refills every few hours)
+- Limits based on total compute (model, prompt length, files attached, etc.), not simple request counter
+- Exact numbers withheld "to avoid abuse"
+- When both buckets empty, users can:
+  1. Wait for refill
+  2. Switch to cheaper model
+  3. Turn on usage-based billing
+  4. Upgrade to Ultra (≈20x bigger buckets)
+- See: [[#ref2][Rate-limits documentation]]
+
+*** Forum Moderator & Staff Clarifications (18 June 2025)
+- Ultra *includes* Max mode
+- New plans have *no automatic fall-back to slow queue*
+- Once 429 appears, user is rate-limited until refill or manual toggle of usage billing
+- Ultra has "20x the rate limits of Pro" but exact numbers are not published
+- See: [[#ref3][Forum clarifications]]
+
+** Common Misconception: The "500 vs 10,000" Request Numbers
+
+*Short answer*: Nobody at Cursor has published the exact figures "Pro ≈ 500 fast requests, Ultra ≈ 10,000."
+
+*** What Cursor Actually Commits To
+- *Legacy system*: Pro included *500 fast requests* per user per month (see [[#ref8][Plans & Usage docs]])
+- *New system (17-18 June 2025)*: Cursor replaced fixed quota with *compute-based rate-limit buckets*
+- *Ultra*: Only stated as having *"20x the rate limits of Pro"* with raw numbers withheld (see [[#ref2][Rate-limits docs]])
+
+*** Where the 500/10,000 Idea Comes From
+Because 20 × 500 = 10,000, many users inferred that Ultra's bucket must be "about ten-thousand fast-request equivalents." This arithmetic is handy for intuition, **but it is not an official guarantee**.
+
+| Plan                            | What Cursor Actually Commits To                                            | Where the 500/10,000 Idea Comes From                                                             |
+|---------------------------------+----------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------|
+| *Pro (default, 18 June 2025-)*| Unlimited requests gated by two invisible compute buckets (burst + local) | Legacy Pro used to cap at 500 fast requests, so people use that as mental yard-stick             |
+| *Ultra (18 June 2025-)*       | Same bucket system, but "*20x the rate limits of Pro*"                  | 20 × the legacy 500 ≈ 10,000 — an *approximation*, not a published quota                        |
+
+*** Bottom Line
+- If you stay on new rate-limit Pro, you no longer get a fixed 500-request pot
+- Ultra is simply "whatever Pro gets × 20" — Cursor won't say how big that is in requests or tokens
+- You can switch back to old 500-request plan under *Dashboard → Advanced Settings*, but then 20× multiplier no longer applies
+- The "500 vs 10,000" phrasing is community shorthand, **not official Cursor documentation**
+
+References: [[#ref8][Plans & Usage]], [[#ref2][Rate-limits]], [[#ref9][Analytics India coverage]]
+
+** What Happens When You Hit the Limit?
+
+| Action                                          | Result                                                                                                                                            |
+|-------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------|
+| Keep sending requests                           | HTTP 429 / "Rate-limit reached" message; request *not* executed, no usage-based charge unless setting enabled                                   |
+| Toggle "Enable usage-based pricing"            | Next request succeeds and billed per-model at standard API + ~20% margin                                                                        |
+| Wait a few hours                                | Local bucket refills; resume without extra charges                                                                                               |
+| Upgrade to Ultra                                | Buckets ~20x larger; no user has reported draining them yet                                                                                      |
+
+References: [[#ref2][Rate-limits docs]], [[#ref4][Plans & Usage docs]]
+
+** Early User Testing & Community Feedback
+
+| Thread (18 June 2025 unless noted)           | Plan/Model      | Observed Behaviour                                                                 | Reference |
+|-----------------------------------------------+-----------------+------------------------------------------------------------------------------------+-----------|
+| "I don't really get ULTRA Plan"              | Pro vs Ultra    | One user hit local limit after ~2h background-agent work; others ran 3h no limit | [[#ref3][ref3]]    |
+| "We've hit a rate limit with Anthropic"      | Pro, Sonnet 3.5 | Day-long coding loop hit limit; switching model or waiting 3h fixed it            | [[#ref5][ref5]]    |
+| "User-provided rate limit exceeded"          | Pro custom key  | Bursty agent exceeded per-minute cap; adding 1-2s delay solved it                 | [[#ref6][ref6]]    |
+| "Bad Usage Reporting on 3rd-Party Extension" | Pro             | Users ask Cursor to show clearer "429 vs billable" indicator                      | [[#ref7][ref7]]    |
+
+*Note*: No Ultra user has yet posted a full "I exhausted the bucket" story, suggesting the 20x headroom is currently holding.
+
+** Practical Tips
+
+1. *Watch for the 429 banner* – as long as visible, new calls won't run or accrue charges
+2. *Burst wisely* – large prompts or Max mode consume burst budget quickly; spacing requests or using cheaper models stretches it
+3. *Decide between Ultra and pay-as-you-go* – if regularly enabling usage billing on Pro and spending >$200/month, Ultra is simpler, cost-capped choice
+4. *Transparency is improving* – Cursor staff note Rate-Limits doc will keep expanding over next few days
+
+* Is On New Pricing Model Status API
+
+Check if user is on new pricing model:
+
+#+begin_src sh :exports both :wrap src json :results raw replace
+curl 'https://www.cursor.com/api/dashboard/is-on-new-pricing' \
+  --data-raw '{}'
+#+end_src
+
+#+results:
+#+begin_src json
+{"isOnNewPricing":true}
+#+end_src
+
+* References
+
+#+NAME: ref1
+- [[https://forum.cursor.com/t/cursor-ultra-a-new-higher-tier-plan-built-alongside-the-model-providers/104530][Cursor Ultra - A new, higher tier plan, built alongside the model providers - Announcements]]
+
+#+NAME: ref2
+- [[https://docs.cursor.com/account/rate-limits][Cursor – Rate Limits Documentation]]
+
+#+NAME: ref3
+- [[https://forum.cursor.com/t/i-dont-really-get-ultra-plan/105237][I don't really get ULTRA Plan - Discussions]]
+
+#+NAME: ref4
+- [[https://docs.cursor.com/account/plans-and-usage?utm_source=chatgpt.com][Cursor – Plans & Usage Documentation]]
+
+#+NAME: ref5
+- [[https://forum.cursor.com/t/weve-hit-a-rate-limit-with-anthropic/61945?utm_source=chatgpt.com][We've hit a rate limit with Anthropic - Discussions]]
+
+#+NAME: ref6
+- [[https://forum.cursor.com/t/user-provided-rate-limit-exceeded-in-agent-mode/36717?utm_source=chatgpt.com][User Provided Rate Limit Exceeded in Agent Mode]]
+
+#+NAME: ref7
+- [[https://forum.cursor.com/t/bad-usage-reporting-on-3rd-party-extension/104888/30][Bad Usage Reporting on 3rd Party Extension - Bug Reports]]
+
+#+NAME: ref8
+- [[https://docs.cursor.com/account/plans-and-usage][Cursor – Plans & Usage]]
+
+#+NAME: ref9
+- [[https://analyticsindiamag.com/ai-features/cursors-new-200-ultra-plan-is-there-a-catch/][Cursor's New $200 Ultra Plan: Is There a Catch? - Analytics India Magazine]]
