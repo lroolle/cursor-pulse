@@ -14,14 +14,17 @@ analytics**
 
 **✨ Complete Support for Cursor's Updated Pricing Tiers**:
 
-- **⭐ Pro/Team/Ultra Smart Limits**: Native "unlimited usage with smart rate-limits" detection and monitoring
+- **⭐ Pro/Team/Ultra Smart Limits**: Native "unlimited usage with smart rate-limits" detection and
+  monitoring
 - **🔄 Hybrid Detection**: Automatic switching between quota and rate-limiting monitoring modes
 - **🔧 Legacy Compatibility**: Continued support for traditional 500-request quota models
 
 ## ✨ Features
 
-- **🔄 Real-time Monitoring** - Track Cursor usage limits, rate-limits, and spending in your status bar
-- **📊 Rich Analytics** - View usage statistics, lines edited, and recent activity across all plan types
+- **🔄 Real-time Monitoring** - Track Cursor usage limits, rate-limits, and spending in your status
+  bar
+- **📊 Rich Analytics** - View usage statistics, lines edited, and recent activity across all plan
+  types
 - **⚡ Smart Caching** - Fast loading with intelligent data refresh and offline access
 - **🎨 Visual Feedback** - Smooth animations and status indicators with rate-limiting alerts
 - **🔍 Detailed Tooltips** - Hover for comprehensive usage information and plan-specific metrics
@@ -104,7 +107,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ### v1.1.0 - Advanced Analytics & Caching
 
-- **📦 Event Caching** - Cache usage events to a local table for offline access and improved performance
+- **📦 Event Caching** - Cache usage events to a local table for offline access and improved
+  performance
 - **📈 Advanced Analytics Dashboard** - Detailed usage pattern analysis including:
   - Usage trends and peak hours analysis
   - Code completion acceptance rates
