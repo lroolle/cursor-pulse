@@ -1,0 +1,4 @@
+[ux] Rate limit tooltip message confusing - users unsure if "Rate Limited" means current status or plan type (<120 chars)
+[design] "Unlimited Requests | Rate Limited" messaging ambiguous - should clarify plan type vs current status
+[user-feedback] GitHub feedback: "Does it mean I am being Rate Limited right now, or I am on the Rate Limit Plan?"
+[error-fix] Changed "Rate Limited" to "Pro Plan" and improved explanatory text to clarify plan type vs status
