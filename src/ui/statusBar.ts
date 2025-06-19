@@ -322,7 +322,7 @@ export class StatusBarProvider {
       // Show unlimited status section for new pricing users
       log.debug(`[StatusBar] Showing unlimited requests section for new pricing`);
       tooltip.appendMarkdown(
-        `<div style="padding:10px"><b>$(infinity) Unlimited Requests</b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>Pro Plan</strong>&nbsp;<span title="Requests are rate limited based on your plan tier">$(info)</span></div>\n\n`,
+        `<div style="padding:10px"><b>$(infinity) Unlimited Requests</b>&nbsp;<span title="Requests are rate limited based on your plan tier">$(info)</span></div>\n\n`,
       );
     }
 

@@ -3,3 +3,4 @@
 [user-feedback] GitHub feedback: "Does it mean I am being Rate Limited right now, or I am on the Rate Limit Plan?"
 [error-fix] Changed "Rate Limited" to "Pro Plan" and improved explanatory text to clarify plan type vs status
 [optimization] Replaced second line with info icon hover - cleaner UI while preserving information accessibility
+[design] Removed redundant "Pro Plan" text since plan type already shown in user info section
