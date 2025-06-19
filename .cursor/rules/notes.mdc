@@ -2,3 +2,4 @@
 [user-feedback] GitHub: "Does it mean I am being Rate Limited right now, or I am on the Rate Limit Plan?"
 [error-fix] Changed "Rate Limited" → info icon hover with explanatory text
 [design] Removed redundant plan type display (already in user info section)
+[best-practice] UI messaging: avoid ambiguous terms, use progressive disclosure, eliminate redundancy
