@@ -21,6 +21,7 @@ export class StatusBarProvider {
   private dataService: DataService;
   private previousQuota: number = 0;
   private previousUsageBasedSpend: number = 0;
+  private previousFreeRequestCount: number = 0;
   private animationTimer: NodeJS.Timeout | undefined;
   private flipTimer: NodeJS.Timeout | undefined;
   private originalText: string = "";
@@ -322,7 +323,7 @@ export class StatusBarProvider {
       // Show unlimited status section for new pricing users
       log.debug(`[StatusBar] Showing unlimited requests section for new pricing`);
       tooltip.appendMarkdown(
-        `<div style="padding:10px"><b>$(infinity) Unlimited Requests</b>&nbsp;<span title="Requests are rate limited based on your plan tier">$(info)</span></div>\n\n`,
+        `<div style="padding:10px"><b>$(infinity) Unlimited Requests</b>&nbsp;<a href="https://docs.cursor.com/account/rate-limits" title="Learn more about rate limits in the official documentation">$(info)</a></div>\n\n`,
       );
     }
 
@@ -343,7 +344,7 @@ export class StatusBarProvider {
         const spendPercentage = limit > 0 ? Math.round((totalCost / limit) * 100) : 0;
 
         tooltip.appendMarkdown(
-          `<div><b>$(credit-card) Usage-Based Spend</b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>$${totalCost.toFixed(2)}/${limit === 0 ? "N/A" : limit} (${spendPercentage}%)</strong><br/>&nbsp;&nbsp;&nbsp;&nbsp;<small style="font-size:10px;opacity:0.8;line-height:0.9;"><i>Reset in <strong>${usageBasedPeriod.remaining} days</strong> (${usageBasedPeriod.start} to ${usageBasedPeriod.end})</i></small><br/>&nbsp;&nbsp;&nbsp;&nbsp;${this.createProgressBar(spendPercentage)}</div>\n\n`,
+          `<div><b>$(credit-card) Usage-Based Spend</b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>$${totalCost.toFixed(2)}/${limit === 0 ? "N/A" : limit} (${spendPercentage}%)</strong><br/>&nbsp;&nbsp;&nbsp;&nbsp;<small style="font-size:10px;opacity:0.8;line-height:0.9;"><i>Invoice in <strong>${usageBasedPeriod.remaining} days</strong> (${usageBasedPeriod.start} to ${usageBasedPeriod.end})</i></small><br/>&nbsp;&nbsp;&nbsp;&nbsp;${this.createProgressBar(spendPercentage)}</div>\n\n`,
         );
 
         const recentItems = [
@@ -407,8 +408,9 @@ export class StatusBarProvider {
         statusExists: !!stats.usageBasedPricing?.status,
         isEnabled: stats.usageBasedPricing?.status?.isEnabled,
       });
-      tooltip.appendMarkdown(`$(lock) **Usage-Based Pricing:** $(x) Disabled\n\n`);
-      tooltip.appendMarkdown(`&nbsp;&nbsp;&nbsp;&nbsp;$(info) Only slow requests when quota exceeded\n\n`);
+      tooltip.appendMarkdown(
+        `$(lock) **Usage-Based Pricing** $(x) Disabled&nbsp;<a href="https://docs.cursor.com/account/plans-and-usage#usage-based-pricing" title="Learn more about usage-based pricing in the official documentation">$(info)</a>\n\n`,
+      );
     } else {
       log.debug(`[StatusBar] No usage-based pricing data found`);
     }
@@ -441,6 +443,7 @@ export class StatusBarProvider {
           const timeCol = timeStr.padEnd(11);
           const countCol = `${requestCount}×`.padEnd(6);
           const modelCol = trimmedModel.padEnd(26);
+          const freeTag = event.priceCents === 0 ? this.createFreeSvg() : "";
           const typeTagText = typeTag;
 
           const compactDateTime = timeStr;
@@ -452,7 +455,7 @@ export class StatusBarProvider {
           const title = `${compactDateTime} model: ${model}, MAX Mode: ${maxModeText}, Slow Mode: ${slowModeText}, type: ${typeText}, Cost Requests: ${costText}`;
 
           tooltip.appendMarkdown(
-            `&nbsp;&nbsp;&nbsp;&nbsp;<small style="font-size:9px;" title="${this.escapeHtmlAttribute(title)}">${timeCol} <b>${countCol}</b> <code>${modelCol}</code> ${modeTag}${errorTag}${slowTag}${typeTagText}</small><br/>\n`,
+            `&nbsp;&nbsp;&nbsp;&nbsp;<small style="font-size:9px;" title="${this.escapeHtmlAttribute(title)}">${timeCol} <b>${countCol}</b> <code>${modelCol}</code> ${modeTag}${errorTag}${slowTag}${freeTag}${typeTagText}</small><br/>\n`,
           );
         }
 
@@ -686,6 +689,21 @@ export class StatusBarProvider {
     return `<img src="data:image/svg+xml;base64,${svgBase64}" alt="M" width="8" height="10" style="vertical-align: middle;" />`;
   }
 
+  private createFreeSvg(): string {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="8" height="10" viewBox="0 0 8 10">
+  <defs>
+    <linearGradient id="freeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#10b981;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#34d399;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <text x="4" y="8" text-anchor="middle" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="8" font-weight="600" fill="url(#freeGradient)">F</text>
+</svg>`;
+
+    const svgBase64 = Buffer.from(svg.trim()).toString("base64");
+    return `<img src="data:image/svg+xml;base64,${svgBase64}" alt="F" width="8" height="10" style="vertical-align: middle;" />`;
+  }
+
   private createDollarSvg(): string {
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="8" height="10" viewBox="0 0 24 24">
   <g fill="#fbbf24" fill-rule="evenodd" clip-rule="evenodd">
@@ -737,9 +755,65 @@ export class StatusBarProvider {
     this.clearAnimationTimers();
     const delta = currentQuota - oldQuota;
 
-    this.executeFrameAnimation(delta, percentage, (frame: number) =>
-      this.formatPremiumFrames(frame, delta, oldQuota, currentQuota, quotaLimit, showPercentage),
-    );
+    this.playQuotaAnimation(delta, oldQuota, currentQuota, quotaLimit, showPercentage, percentage);
+  }
+
+  private playQuotaAnimation(
+    delta: number,
+    oldQuota: number,
+    currentQuota: number,
+    quotaLimit: number,
+    showPercentage: boolean,
+    percentage: number,
+  ): void {
+    let currentFrameIndex = 0;
+    const frames = [1, 2, 3];
+
+    // Custom timings: fast start, longer celebration, fast end
+    const frameDurations = [150, 500, 400]; // ms
+
+    const playNextFrame = () => {
+      if (currentFrameIndex >= frames.length) {
+        // Fast restore
+        setTimeout(() => {
+          this.statusBarItem.text = this.originalText;
+          this.statusBarItem.color = this.getUsageColor(percentage);
+          this.clearAnimationTimers();
+        }, 100);
+        return;
+      }
+
+      const frame = frames[currentFrameIndex];
+      const { text, color } = this.formatPremiumFrames(
+        frame,
+        delta,
+        oldQuota,
+        currentQuota,
+        quotaLimit,
+        showPercentage,
+      );
+
+      this.statusBarItem.text = text;
+      this.statusBarItem.color = color;
+
+      currentFrameIndex++;
+
+      if (currentFrameIndex < frames.length) {
+        this.animationTimer = setTimeout(playNextFrame, frameDurations[currentFrameIndex - 1]);
+      } else {
+        // Stay on final celebration frame longer
+        this.animationTimer = setTimeout(
+          () => {
+            this.statusBarItem.text = this.originalText;
+            this.statusBarItem.color = this.getUsageColor(percentage);
+            this.clearAnimationTimers();
+          },
+          frameDurations[currentFrameIndex - 1],
+        );
+      }
+    };
+
+    playNextFrame();
   }
 
   private animateUsageBasedIncreaseWithOldValue(
@@ -757,9 +831,130 @@ export class StatusBarProvider {
     this.clearAnimationTimers();
     const delta = currentSpend - oldSpend;
 
-    this.executeFrameAnimation(delta, percentage, (frame: number) =>
-      this.formatUsageBasedFrames(frame, delta, oldSpend, currentSpend, totalSpend, spendLimit, showPercentage),
-    );
+    this.playUsageBasedAnimation(delta, oldSpend, currentSpend, totalSpend, spendLimit, showPercentage, percentage);
+  }
+
+  private playUsageBasedAnimation(
+    delta: number,
+    oldSpend: number,
+    currentSpend: number,
+    totalSpend: number,
+    spendLimit: number,
+    showPercentage: boolean,
+    percentage: number,
+  ): void {
+    let currentFrameIndex = 0;
+    const frames = [1, 2, 3];
+
+    // Custom timings: fast start, longer celebration, fast end
+    const frameDurations = [150, 500, 400]; // ms
+
+    const playNextFrame = () => {
+      if (currentFrameIndex >= frames.length) {
+        // Fast restore
+        setTimeout(() => {
+          this.statusBarItem.text = this.originalText;
+          this.statusBarItem.color = this.getUsageColor(percentage);
+          this.clearAnimationTimers();
+        }, 100);
+        return;
+      }
+
+      const frame = frames[currentFrameIndex];
+      const { text, color } = this.formatUsageBasedFrames(
+        frame,
+        delta,
+        oldSpend,
+        currentSpend,
+        totalSpend,
+        spendLimit,
+        showPercentage,
+      );
+
+      this.statusBarItem.text = text;
+      this.statusBarItem.color = color;
+
+      currentFrameIndex++;
+
+      if (currentFrameIndex < frames.length) {
+        this.animationTimer = setTimeout(playNextFrame, frameDurations[currentFrameIndex - 1]);
+      } else {
+        // Stay on final celebration frame longer
+        this.animationTimer = setTimeout(
+          () => {
+            this.statusBarItem.text = this.originalText;
+            this.statusBarItem.color = this.getUsageColor(percentage);
+            this.clearAnimationTimers();
+          },
+          frameDurations[currentFrameIndex - 1],
+        );
+      }
+    };
+
+    playNextFrame();
+  }
+
+  private animateFreeRequestIncrease(currentFreeCount: number, oldFreeCount: number, totalRequestCount: number): void {
+    if (!this.isAnimationEnabled()) {
+      return;
+    }
+
+    this.clearAnimationTimers();
+    const delta = currentFreeCount - oldFreeCount;
+
+    this.playFreeRequestAnimation(delta, oldFreeCount, currentFreeCount, totalRequestCount);
+  }
+
+  private playFreeRequestAnimation(
+    delta: number,
+    oldFreeCount: number,
+    currentFreeCount: number,
+    totalRequestCount: number,
+  ): void {
+    let currentFrameIndex = 0;
+    const frames = [1, 2, 3];
+
+    const frameDurations = [150, 500, 400]; // ms
+
+    const playNextFrame = () => {
+      if (currentFrameIndex >= frames.length) {
+        setTimeout(() => {
+          this.statusBarItem.text = this.originalText;
+          this.statusBarItem.color = "#74c0fc";
+          this.clearAnimationTimers();
+        }, 100);
+        return;
+      }
+
+      const frame = frames[currentFrameIndex];
+      const { text, color } = this.formatFreeRequestFrames(
+        frame,
+        delta,
+        oldFreeCount,
+        currentFreeCount,
+        totalRequestCount,
+      );
+
+      this.statusBarItem.text = text;
+      this.statusBarItem.color = color;
+
+      currentFrameIndex++;
+
+      if (currentFrameIndex < frames.length) {
+        this.animationTimer = setTimeout(playNextFrame, frameDurations[currentFrameIndex - 1]);
+      } else {
+        this.animationTimer = setTimeout(
+          () => {
+            this.statusBarItem.text = this.originalText;
+            this.statusBarItem.color = "#74c0fc";
+            this.clearAnimationTimers();
+          },
+          frameDurations[currentFrameIndex - 1],
+        );
+      }
+    };
+
+    playNextFrame();
   }
 
   private isAnimationEnabled(): boolean {
@@ -771,22 +966,6 @@ export class StatusBarProvider {
       return false;
     }
     return true;
-  }
-
-  private executeFrameAnimation(
-    delta: number,
-    percentage: number,
-    frameFormatter: (frame: number) => { text: string; color: string | vscode.ThemeColor },
-  ): void {
-    const { BOOST_THRESHOLD, MAGIC_THRESHOLD } = StatusBarProvider.ANIMATION_CONFIG;
-
-    if (delta >= MAGIC_THRESHOLD) {
-      this.runMagicFrameAnimation(percentage, frameFormatter);
-    } else if (delta >= BOOST_THRESHOLD) {
-      this.runBoostFrameAnimation(percentage, frameFormatter);
-    } else {
-      this.runBasicFrameAnimation(percentage, frameFormatter);
-    }
   }
 
   private formatPremiumFrames(
@@ -810,12 +989,12 @@ export class StatusBarProvider {
       case 2:
         if (animationType === "basic") {
           return {
-            text: `$(fold-up) +${delta} ${oldQuota}/${quotaLimit}${percentageDisplay}`,
+            text: `$(arrow-up) +${delta}  ${currentQuota}/${quotaLimit}${percentageDisplay}`,
             color: new vscode.ThemeColor("statusBarItem.prominentForeground"),
           };
         } else {
           return {
-            text: `$(fold-up) +${delta} ${oldQuota}/${quotaLimit}${percentageDisplay}`,
+            text: `$(arrow-up) +${delta}  ${currentQuota}/${quotaLimit}${percentageDisplay}`,
             color: StatusBarProvider.ANIMATION_CONFIG.COLORS.BLUE,
           };
         }
@@ -823,17 +1002,17 @@ export class StatusBarProvider {
       case 3:
         if (animationType === "basic") {
           return {
-            text: `$(fold-up) +${delta} ${currentQuota}/${quotaLimit}${percentageDisplay}`,
+            text: `$(arrow-up) +${delta}  ${currentQuota}/${quotaLimit}${percentageDisplay}`,
             color: new vscode.ThemeColor("statusBarItem.prominentBackground"),
           };
         } else if (animationType === "boost") {
           return {
-            text: `$(fold-up) +${delta} ${currentQuota}/${quotaLimit}${percentageDisplay}`,
+            text: `$(arrow-up) +${delta}  ${currentQuota}/${quotaLimit}${percentageDisplay}`,
             color: StatusBarProvider.ANIMATION_CONFIG.COLORS.PURPLE,
           };
         } else {
           return {
-            text: `$(fold-up) +${delta} ${currentQuota}/${quotaLimit}${percentageDisplay}`,
+            text: `$(arrow-up) +${delta}  ${currentQuota}/${quotaLimit}${percentageDisplay}`,
             color: StatusBarProvider.ANIMATION_CONFIG.COLORS.MAGIC_BLUE,
           };
         }
@@ -869,12 +1048,12 @@ export class StatusBarProvider {
       case 2:
         if (animationType === "basic") {
           return {
-            text: `$(fold-up) +$${delta.toFixed(2)} $${oldSpend.toFixed(2)}/${limitDisplay}${percentageDisplay}`,
+            text: `$(arrow-up) +$${delta.toFixed(2)}  $${currentSpend.toFixed(2)}/${limitDisplay}${percentageDisplay}`,
             color: new vscode.ThemeColor("statusBarItem.prominentForeground"),
           };
         } else {
           return {
-            text: `$(fold-up) +$${delta.toFixed(2)} $${oldSpend.toFixed(2)}/${limitDisplay}${percentageDisplay}`,
+            text: `$(arrow-up) +$${delta.toFixed(2)}  $${currentSpend.toFixed(2)}/${limitDisplay}${percentageDisplay}`,
             color: StatusBarProvider.ANIMATION_CONFIG.COLORS.BLUE,
           };
         }
@@ -882,17 +1061,17 @@ export class StatusBarProvider {
       case 3:
         if (animationType === "basic") {
           return {
-            text: `$(fold-up) +$${delta.toFixed(2)} $${currentSpend.toFixed(2)}/${limitDisplay}${percentageDisplay}`,
+            text: `$(arrow-up) +$${delta.toFixed(2)}  $${currentSpend.toFixed(2)}/${limitDisplay}${percentageDisplay}`,
             color: new vscode.ThemeColor("statusBarItem.prominentBackground"),
           };
         } else if (animationType === "boost") {
           return {
-            text: `$(fold-up) +$${delta.toFixed(2)} $${currentSpend.toFixed(2)}/${limitDisplay}${percentageDisplay}`,
+            text: `$(arrow-up) +$${delta.toFixed(2)}  $${currentSpend.toFixed(2)}/${limitDisplay}${percentageDisplay}`,
             color: StatusBarProvider.ANIMATION_CONFIG.COLORS.PURPLE,
           };
         } else {
           return {
-            text: `$(fold-up) +$${delta.toFixed(2)} $${currentSpend.toFixed(2)}/${limitDisplay}${percentageDisplay}`,
+            text: `$(arrow-up) +$${delta.toFixed(2)}  $${currentSpend.toFixed(2)}/${limitDisplay}${percentageDisplay}`,
             color: StatusBarProvider.ANIMATION_CONFIG.COLORS.MAGIC_BLUE,
           };
         }
@@ -901,6 +1080,61 @@ export class StatusBarProvider {
         return {
           text: this.originalText,
           color: this.getUsageColor(Math.round((totalSpend / spendLimit) * 100)),
+        };
+    }
+  }
+
+  private formatFreeRequestFrames(
+    frame: number,
+    delta: number,
+    oldFreeCount: number,
+    currentFreeCount: number,
+    totalRequestCount: number,
+  ): { text: string; color: string | vscode.ThemeColor } {
+    const animationType = this.getAnimationType(delta);
+
+    switch (frame) {
+      case 1:
+        return {
+          text: `$(infinity) ${(totalRequestCount - delta).toLocaleString()}`,
+          color: "#74c0fc",
+        };
+
+      case 2:
+        if (animationType === "basic") {
+          return {
+            text: `$(arrow-up) ➕${delta}  ${totalRequestCount.toLocaleString()}`,
+            color: "#06b6d4", // Modern cyan
+          };
+        } else {
+          return {
+            text: `$(arrow-up) ➕${delta}  ${totalRequestCount.toLocaleString()}`,
+            color: "#06b6d4",
+          };
+        }
+
+      case 3:
+        if (animationType === "basic") {
+          return {
+            text: `$(arrow-up) ➕${delta}  ${totalRequestCount.toLocaleString()}`,
+            color: "#0891b2", // Deeper cyan
+          };
+        } else if (animationType === "boost") {
+          return {
+            text: `$(arrow-up) ➕${delta}  ${totalRequestCount.toLocaleString()}`,
+            color: "#0e7490", // Rich teal
+          };
+        } else {
+          return {
+            text: `$(arrow-up) ➕${delta}  ${totalRequestCount.toLocaleString()}`,
+            color: "#155e75", // Deep teal
+          };
+        }
+
+      default:
+        return {
+          text: this.originalText,
+          color: "#74c0fc",
         };
     }
   }
@@ -915,33 +1149,6 @@ export class StatusBarProvider {
       return "boost";
     }
     return "basic";
-  }
-
-  private runBasicFrameAnimation(
-    percentage: number,
-    frameFormatter: (frame: number) => { text: string; color: string | vscode.ThemeColor },
-  ): void {
-    const { BASIC } = StatusBarProvider.ANIMATION_CONFIG.FRAME_DURATION;
-
-    this.playFrameSequence([1, 2, 3], BASIC, frameFormatter, percentage);
-  }
-
-  private runBoostFrameAnimation(
-    percentage: number,
-    frameFormatter: (frame: number) => { text: string; color: string | vscode.ThemeColor },
-  ): void {
-    const { BOOST } = StatusBarProvider.ANIMATION_CONFIG.FRAME_DURATION;
-
-    this.playFrameSequence([1, 2, 3], BOOST, frameFormatter, percentage);
-  }
-
-  private runMagicFrameAnimation(
-    percentage: number,
-    frameFormatter: (frame: number) => { text: string; color: string | vscode.ThemeColor },
-  ): void {
-    const { MAGIC } = StatusBarProvider.ANIMATION_CONFIG.FRAME_DURATION;
-
-    this.playFrameSequence([1, 2, 3], MAGIC, frameFormatter, percentage);
   }
 
   private playFrameSequence(
@@ -1128,24 +1335,35 @@ export class StatusBarProvider {
     usageEvents?: FilteredUsageResponse | null,
   ): void {
     // Get request count from analytics data or fallback to usage events
-    // TODO: unified analytics data from usage events?
     let requestCount = 0;
+    let freeRequestCount = 0;
 
     if (analyticsData && analyticsData.totalRequests > 0) {
       requestCount = analyticsData.totalRequests;
+      // For analytics data, assume all are free unless we have usage-based spending
+      freeRequestCount = requestCount;
     } else if (usageEvents && usageEvents.usageEvents.length > 0) {
       requestCount = this.calculateRequestsFromUsageEvents(usageEvents.usageEvents);
+      freeRequestCount = usageEvents.usageEvents.filter((event) => event.priceCents === 0).length;
     }
+
+    const freeRequestIncreased = freeRequestCount > this.previousFreeRequestCount;
+    const oldFreeCount = this.previousFreeRequestCount;
+    this.previousFreeRequestCount = freeRequestCount;
 
     const statusText = `$(infinity) ${requestCount.toLocaleString()}`;
 
     this.statusBarItem.text = statusText;
     this.statusBarItem.color = "#74c0fc";
     this.originalText = statusText;
+
+    // Trigger animation if free requests increased by significant amount
+    if (freeRequestIncreased && freeRequestCount - oldFreeCount >= 3) {
+      this.animateFreeRequestIncrease(freeRequestCount, oldFreeCount, requestCount);
+    }
   }
 
   private calculateRequestsFromUsageEvents(events: UsageEvent[]): number {
-    // FIXME: this could be inaccurate
     let totalRequests = 0;
 
     for (const event of events) {

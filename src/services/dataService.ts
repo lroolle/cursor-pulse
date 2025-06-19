@@ -448,7 +448,7 @@ export class DataService {
   async fetchUsageEvents(
     options: DataFetchOptions,
     daysBack: number = 7,
-    pageSize: number = 100,
+    pageSize: number = 20,
   ): Promise<FilteredUsageResponse | null> {
     const cacheKey = `events:${daysBack}d:${pageSize}`;
 

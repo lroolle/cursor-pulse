@@ -82,7 +82,7 @@ export class ApiService {
     }
   }
 
-  async fetchFilteredUsageEvents(token: string, daysBack: number = 7, pageSize: number = 100): Promise<any | null> {
+  async fetchFilteredUsageEvents(token: string, daysBack: number = 7, pageSize: number = 20): Promise<any | null> {
     try {
       log.debug(`[API] Fetching usage events for last ${daysBack} days`);
 

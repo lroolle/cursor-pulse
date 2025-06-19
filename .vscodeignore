@@ -1,24 +1,45 @@
+# Development files
+CLAUDE.md
+CONTRIBUTING.md
+mydamnnotes/**
+*.org
+esbuild.js
+vsc-extension-quickstart.md
+.gitignore
+.yarnrc
+.npmrc
+
+# Build and test files  
 .vscode/**
 .vscode-test/**
 out/**
-node_modules/**
-!node_modules/sqlite3/**
 src/**
-.gitignore
-.yarnrc
-esbuild.js
-vsc-extension-quickstart.md
 **/tsconfig.json
 **/eslint.config.mjs
 **/*.map
 **/*.ts
 **/.vscode-test.*
 
-# GitHub Actions and development files
+# Dependencies (except runtime)
+node_modules/**
+!node_modules/sqlite3/**
+package-lock.json
+
+# System files
+.DS_Store
+.git/**
+
+# GitHub Actions and examples
 .github/**
 GITHUB_ACTIONS_SETUP.md
 examples/
 
-# Cursor rules
+# Cursor/Claude rules
 .cursor/**
 .claude/**
+
+# Old packages
+*.vsix
+
+# Prettier config
+.prettier*

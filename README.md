@@ -3,7 +3,7 @@
 **Elegant monitoring for Cursor AI subscription quota with clean status bar integration and rich
 analytics**
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/lroolle/cursor-pulse)
+[![Version](https://img.shields.io/badge/version-1.0.4-blue)](https://github.com/lroolle/cursor-pulse)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 [![Cursor](https://img.shields.io/badge/Cursor-1.0.0+-blue)](https://cursor.com/)
 [![Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-blue)](https://marketplace.visualstudio.com/items?itemName=lroolle.cursor-pulse)

@@ -1,23 +1,19 @@
-# Change Log
+# Changelog
 
-All notable changes to the "cursor-pulse" extension will be documented in this file.
+## [1.0.4] - 2025-06-19
+- **Better UI** - Improved usage events display and documentation links
+- **Enhanced animations** - Smooth, aligned animations for all pricing models
 
-Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
+## [1.0.3] - 2025-06-19
+- **Improved messaging** - Clearer rate limit and plan status display
+
+## [1.0.0] - 2025-06-18
+- **New pricing support** - Full support for unlimited usage with rate-limiting
+- **Automatic detection** - Seamless switching between quota and rate-limit modes
 
 ## [0.3.0] - 2025-06-09
+- **Cross-platform compatibility** - Fixed SQLite issues on all platforms
+- **Better caching** - Faster loading with VSCode storage
 
-### 🛠️ Fixed SQLite Issues
-- Replace native SQLite3 with sql.js - no more installation failures
-- Extension now works on all platforms without additional setup
-
-### ⚡ Better Caching
-- Use VSCode's storage instead of writing files
-- Faster loading and fewer API calls
-
-### 🔄 Breaking Changes
-- Old cache will be cleared automatically
-- Some internal APIs changed
-
-## 0.2.4 - 2025-06-09
-
+## [0.2.4] - 2025-06-08
 - Initial release
